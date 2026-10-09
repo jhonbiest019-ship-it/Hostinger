@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+.env
+.env.local
+*.log
+prisma/*.db
+mysql-test-data/
+.test-mysql-data/
+backups/
+*.sql.gz
+*.dump
+*.pem
+*.tsbuildinfo

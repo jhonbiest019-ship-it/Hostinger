@@ -1,0 +1,356 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum MailboxStatus {
+  PENDING
+  ACTIVE
+  ERROR
+  DISABLED
+}
+
+enum ConnectionStatus {
+  NOT_TESTED
+  CONNECTED
+  FAILED
+}
+
+enum RecordStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ContactStatus {
+  ACTIVE
+  CONTACTED
+  REPLIED
+  DO_NOT_CONTACT
+  INVALID
+  ARCHIVED
+}
+
+enum CampaignStatus {
+  DRAFT
+  READY
+  SENDING
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CampaignRecipientStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  REPLIED
+  CANCELLED
+  SKIPPED
+}
+
+enum JobType {
+  INITIAL_EMAIL
+  FOLLOW_UP
+}
+
+enum EmailDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum MessageStatus {
+  PENDING
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+  REPLIED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DeliveryState {
+  NOT_STARTED
+  IN_FLIGHT
+  UNKNOWN
+  CONFIRMED
+}
+
+enum LogStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  DELIVERED
+  REPLIED
+}
+
+model User {
+  id             String           @id @default(cuid())
+  email          String           @unique
+  name           String?
+  passwordHash   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  mailboxes      Mailbox[]
+  contacts       Contact[]
+  templates      Template[]
+  campaigns      Campaign[]
+  messages       EmailMessage[]
+  followUpRules  FollowUpRule[]
+  scheduledJobs  ScheduledJob[]
+  emailLogs      EmailLog[]
+}
+
+model Mailbox {
+  id                    String        @id @default(cuid())
+  userId                String
+  emailAddress          String
+  displayName           String?
+  smtpHost              String
+  smtpPort              Int
+  smtpSecurity          String        @default("TLS")
+  imapHost              String
+  imapPort              Int
+  imapSecurity          String        @default("TLS")
+  username              String?
+  encryptedCredentials  String?       @db.Text
+  status                MailboxStatus  @default(PENDING)
+  smtpStatus            ConnectionStatus @default(NOT_TESTED)
+  imapStatus            ConnectionStatus @default(NOT_TESTED)
+  lastCheckedAt         DateTime?
+  lastSuccessfulAt      DateTime?
+  lastError             String?       @db.VarChar(500)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns             Campaign[]
+  messages              EmailMessage[]
+  emailLogs             EmailLog[]
+  @@unique([userId, emailAddress])
+  @@index([userId, status])
+}
+
+model Contact {
+  id          String        @id @default(cuid())
+  userId      String
+  name        String
+  firstName   String?
+  lastName    String?
+  fullName    String?
+  company     String?
+  companyName String?
+  brandName   String?
+  email       String
+  website     String?
+  formUrl     String?
+  phone       String?
+  notes       String?       @db.Text
+  status      ContactStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipients  CampaignRecipient[]
+  messages    EmailMessage[]
+  emailLogs   EmailLog[]
+  @@unique([userId, email])
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
+
+model Template {
+  id          String       @id @default(cuid())
+  userId      String
+  name        String
+  subject     String
+  body        String       @db.Text
+  status      RecordStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns   Campaign[]
+  messages    EmailMessage[]
+  followUpRules FollowUpRule[]
+  @@index([userId, status])
+}
+
+model Campaign {
+  id          String           @id @default(cuid())
+  userId      String
+  mailboxId   String?
+  templateId  String?
+  name        String
+  description String?          @db.Text
+  followUpsEnabled Boolean     @default(false)
+  stopFollowUpsOnReply Boolean @default(true)
+  status      CampaignStatus   @default(DRAFT)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mailbox     Mailbox?         @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
+  template    Template?        @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipients  CampaignRecipient[]
+  messages    EmailMessage[]
+  followUpRules FollowUpRule[]
+  scheduledJobs ScheduledJob[]
+  emailLogs   EmailLog[]
+  @@index([userId, status])
+}
+
+model CampaignRecipient {
+  id          String      @id @default(cuid())
+  campaignId  String
+  contactId   String
+  status      CampaignRecipientStatus @default(PENDING)
+  repliedAt   DateTime?
+  lastInboundAt DateTime?
+  lastInboundMessageId String?
+  threadId    String?
+  snapshotName  String?
+  snapshotBrand String?
+  snapshotEmail String?
+  createdAt   DateTime    @default(now())
+  campaign    Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages    EmailMessage[]
+  scheduledJobs ScheduledJob[]
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+}
+
+model EmailMessage {
+  id             String       @id @default(cuid())
+  userId         String
+  campaignId     String?
+  mailboxId      String?
+  contactId      String?
+  templateId     String?
+  recipientId    String?
+  followUpStep   Int?
+  toAddress      String
+  fromAddress    String?
+  subject        String
+  body           String       @db.Text
+  status         MessageStatus @default(PENDING)
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  repliedAt      DateTime?
+  errorMessage   String?      @db.Text
+  providerMessageId String?
+  internetMessageId String?
+  inReplyTo      String?
+  references     String?      @db.Text
+  threadId       String?
+  direction      EmailDirection @default(OUTBOUND)
+  receivedAt     DateTime?
+  createdAt      DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign       Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  mailbox        Mailbox?     @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
+  contact        Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  template       Template?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipient      CampaignRecipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+  emailLogs      EmailLog[]
+  scheduledJobs  ScheduledJob[]
+  @@index([userId, status])
+}
+
+model FollowUpRule {
+  id             String       @id @default(cuid())
+  userId         String
+  campaignId     String
+  stepNumber     Int
+  delayMinutes   Int
+  delayAmount    Int           @default(1)
+  delayUnit      String        @default("DAYS")
+  enabled        Boolean       @default(true)
+  timezone       String?
+  templateId     String?
+  subject        String?
+  body           String       @db.Text
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign       Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  template       Template?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  scheduledJobs  ScheduledJob[]
+  @@unique([campaignId, stepNumber])
+  @@index([userId])
+}
+
+model ScheduledJob {
+  id          String    @id @default(cuid())
+  userId      String
+  campaignId  String?
+  campaignRecipientId String?
+  messageId   String?
+  followUpRuleId String?
+  jobType     JobType   @default(INITIAL_EMAIL)
+  followUpStep Int?
+  runAt       DateTime
+  timezone    String    @default("UTC")
+  status      JobStatus @default(PENDING)
+  deliveryState DeliveryState @default(NOT_STARTED)
+  attempts    Int       @default(0)
+  lastError   String?   @db.Text
+  lastAttemptAt DateTime?
+  processedAt DateTime?
+  nextAttemptAt DateTime?
+  leaseToken  String?   @db.VarChar(64)
+  leaseExpiresAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignRecipient CampaignRecipient? @relation(fields: [campaignRecipientId], references: [id], onDelete: SetNull)
+  message     EmailMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  followUpRule FollowUpRule? @relation(fields: [followUpRuleId], references: [id], onDelete: SetNull)
+  @@index([userId, status, runAt])
+  @@index([status, nextAttemptAt])
+  @@unique([campaignRecipientId, jobType, followUpStep])
+}
+
+model WorkerLease {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  ownerToken  String   @db.VarChar(64)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model EmailLog {
+  id          String     @id @default(cuid())
+  userId      String
+  messageId   String?
+  campaignId  String?
+  mailboxId   String?
+  contactId   String?
+  sender      String?
+  recipient   String
+  subject     String
+  status      LogStatus
+  message     String?    @db.Text
+  providerMessageId String?
+  followUpStep Int?
+  createdAt   DateTime   @default(now())
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email       EmailMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  mailbox     Mailbox?   @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
+  contact     Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  @@index([userId, status, createdAt])
+}

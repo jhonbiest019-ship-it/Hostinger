@@ -1,0 +1,5 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/auth";
+
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) { try { const userId = await requireUser(request); const { id } = await context.params; const result = await prisma.scheduledJob.updateMany({ where: { id, userId, status: "PENDING" }, data: { status: "CANCELLED", processedAt: new Date(), lastError: "Job cancelled by user." } }); if (!result.count) return NextResponse.json({ error: "Only pending jobs can be cancelled." }, { status: 409 }); const job = await prisma.scheduledJob.findUnique({ where: { id }, select: { campaignRecipientId: true } }); if (job?.campaignRecipientId) await prisma.campaignRecipient.updateMany({ where: { id: job.campaignRecipientId, status: "PENDING" }, data: { status: "SKIPPED" } }); return NextResponse.json({ success: true }); } catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Unable to cancel scheduled job." }, { status: 500 }); } }
