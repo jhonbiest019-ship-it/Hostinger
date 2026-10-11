@@ -27,6 +27,8 @@ npm run worker
 
 The worker directly calls `processDueJobs()` and `syncAllMailboxes()`. It does not call Vercel to perform queue work. It uses the existing database leases, claim tokens, retry policy, follow-up cancellation, and ambiguous-delivery safeguards.
 
+The worker command uses `tsx`, which is a production dependency because the standalone worker must remain runnable when the worker host installs production dependencies only. Use `npm ci` on the worker host; do not use `npm ci --omit=dev` unless the worker is replaced by a separately compiled artifact.
+
 For a scheduler that starts a short-lived process, use:
 
 ```text
