@@ -52,7 +52,23 @@ export async function POST(request: NextRequest) {
     });
     response.cookies.set("outreach_session", token, sessionCookieOptions());
     return response;
-  } catch {
+  } catch (error) {
+    console.error("Login error:", error);
+    const msg = error instanceof Error ? error.message : "Unable to sign in.";
+    if (
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("Can't reach database") ||
+      msg.includes("ETIMEDOUT") ||
+      msg.includes("connect")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Database not connected on Vercel. Please add your cloud DATABASE_URL in Vercel Environment Variables.",
+        },
+        { status: 500 }
+      );
+    }
     return NextResponse.json({ error: "Unable to sign in." }, { status: 500 });
   }
 }
