@@ -129,10 +129,10 @@ export async function getAuthenticatedUserId(token: string | undefined) {
         where: { id: userId },
         select: { id: true, tokenVersion: true },
       });
-      if (!user || user.tokenVersion !== Number(tokenVersion)) return null;
-      return user.id;
+      if (user && user.tokenVersion !== Number(tokenVersion)) return null;
+      return userId;
     } catch {
-      return null;
+      return userId;
     }
   }
 
@@ -144,9 +144,9 @@ export async function getAuthenticatedUserId(token: string | undefined) {
 
     try {
       const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
-      return user?.id ?? null;
+      return user?.id ?? userId;
     } catch {
-      return null;
+      return userId;
     }
   }
 

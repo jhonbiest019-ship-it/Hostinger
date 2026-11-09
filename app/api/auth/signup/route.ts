@@ -85,20 +85,6 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Signup error:", error);
     const msg = error instanceof Error ? error.message : "Unable to create account.";
-    if (
-      msg.includes("ECONNREFUSED") ||
-      msg.includes("Can't reach database") ||
-      msg.includes("ETIMEDOUT") ||
-      msg.includes("connect")
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Database not connected on Vercel. Please add your cloud DATABASE_URL in Vercel Environment Variables.",
-        },
-        { status: 500 }
-      );
-    }
     return NextResponse.json({ error: msg || "Unable to create account." }, { status: 500 });
   }
 }
