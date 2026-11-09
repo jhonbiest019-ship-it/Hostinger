@@ -238,10 +238,31 @@ export function TemplateWorkspace() {
               </button>
               <button
                 type="button"
+                onClick={() => addTag("firstName")}
+                className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+              >
+                + {"{{firstName}}"} (First Name)
+              </button>
+              <button
+                type="button"
+                onClick={() => addTag("companyName")}
+                className="rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+              >
+                + {"{{companyName}}"} (Company)
+              </button>
+              <button
+                type="button"
                 onClick={() => addTag("website")}
                 className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
               >
                 + {"{{website}}"} (Website)
+              </button>
+              <button
+                type="button"
+                onClick={() => addTag("phone")}
+                className="rounded-lg bg-teal-50 border border-teal-200 px-3 py-1 text-xs font-semibold text-teal-700 hover:bg-teal-100"
+              >
+                + {"{{phone}}"} (Phone)
               </button>
             </div>
           </div>

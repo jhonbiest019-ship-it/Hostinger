@@ -67,6 +67,16 @@ function matchesFilter(item: any, where: any): boolean {
 
     const itemVal = item[key];
 
+    // Compound unique keys (e.g. userId_email: { userId, email })
+    if (value && typeof value === "object" && !(value instanceof Date) && !Array.isArray(value)) {
+      const opKeys = ["in", "notIn", "not", "contains", "startsWith", "gte", "lte", "gt", "lt", "mode"];
+      const hasOp = Object.keys(value).some((k) => opKeys.includes(k));
+      if (!hasOp) {
+        if (!matchesFilter(item, value)) return false;
+        continue;
+      }
+    }
+
     // Sub-operators: in, notIn, not, contains, startsWith, gt, gte, lt, lte
     if (value && typeof value === "object" && !(value instanceof Date)) {
       if ("in" in value && Array.isArray((value as any).in)) {

@@ -69,6 +69,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid mailbox details.", fields: parsed.error.flatten().fieldErrors }, { status: 400 });
     }
     const data = parsed.data;
+    const cleanEmail = data.emailAddress.trim().toLowerCase();
+    // Hostinger username requires the full email address
+    const cleanUsername = data.username.includes("@")
+      ? data.username.trim()
+      : cleanEmail;
+    const cleanSmtpHost = data.smtpHost?.trim() || "smtp.hostinger.com";
+    const cleanImapHost = data.imapHost?.trim() || "imap.hostinger.com";
 
     // Real-time connection test on creation
     let initialStatus: MailboxStatus = "PENDING";
@@ -81,14 +88,14 @@ export async function POST(request: NextRequest) {
     try {
       const now = new Date();
       const testResult = await testMailboxConnections({
-        emailAddress: data.emailAddress,
+        emailAddress: cleanEmail,
         displayName: data.displayName || undefined,
-        username: data.username,
+        username: cleanUsername,
         password: data.password,
-        smtpHost: data.smtpHost,
+        smtpHost: cleanSmtpHost,
         smtpPort: data.smtpPort,
         smtpSecurity: data.smtpSecurity,
-        imapHost: data.imapHost,
+        imapHost: cleanImapHost,
         imapPort: data.imapPort,
         imapSecurity: data.imapSecurity,
       });
@@ -108,10 +115,10 @@ export async function POST(request: NextRequest) {
           const imapErr = testResult.imapError ? (testResult.imapError instanceof Error ? testResult.imapError.message : String(testResult.imapError)) : "";
           const combined = `${smtpErr} ${imapErr}`.toLowerCase();
           if (combined.includes("535") || combined.includes("auth") || combined.includes("password") || combined.includes("credential")) {
-            const isHostinger = data.smtpHost.includes("hostinger.com");
+            const isHostinger = cleanSmtpHost.includes("hostinger.com");
             initialLastError = isHostinger
-              ? `Hostinger Password Rejected (Code 535): Invalid password or username for ${data.emailAddress}. Check Hostinger hPanel -> Emails.`
-              : `Webmail Authentication Failed: Invalid password or username for ${data.emailAddress} on ${data.smtpHost}. Please verify your Webmail login credentials.`;
+              ? `Hostinger Password Rejected (Code 535): Invalid password or username for ${cleanEmail}. Check Hostinger hPanel -> Emails.`
+              : `Webmail Authentication Failed: Invalid password or username for ${cleanEmail} on ${cleanSmtpHost}. Please verify your Webmail login credentials.`;
           } else {
             initialLastError = [!testResult.smtp && `SMTP: ${smtpErr || "Failed"}`, !testResult.imap && `IMAP: ${imapErr || "Failed"}`].filter(Boolean).join(" | ");
           }
@@ -122,14 +129,14 @@ export async function POST(request: NextRequest) {
     const mailbox = await prisma.mailbox.create({
       data: {
         userId,
-        emailAddress: data.emailAddress,
+        emailAddress: cleanEmail,
         displayName: data.displayName || null,
-        username: data.username,
+        username: cleanUsername,
         encryptedCredentials: encryptedPassword(data.password),
-        smtpHost: data.smtpHost,
+        smtpHost: cleanSmtpHost,
         smtpPort: data.smtpPort,
         smtpSecurity: data.smtpSecurity,
-        imapHost: data.imapHost,
+        imapHost: cleanImapHost,
         imapPort: data.imapPort,
         imapSecurity: data.imapSecurity,
         status: initialStatus,
@@ -160,11 +167,22 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       mailbox: publicMailbox(mailbox),
       connectionStatus: initialStatus,
       lastError: initialLastError,
     }, { status: 201 });
+
+    if (initialStatus === "ACTIVE") {
+      response.cookies.set("active_mailbox_id", mailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof Response) return error;
     if (error instanceof Error && error.message.includes("Unique constraint")) {

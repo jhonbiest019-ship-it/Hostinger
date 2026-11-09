@@ -20,7 +20,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     if (!existing) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
     const parsed = mailboxUpdateSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: "Invalid mailbox details.", fields: parsed.error.flatten().fieldErrors }, { status: 400 });
-    const data = parsed.data;
+    const rawData = parsed.data;
+    const cleanEmail = rawData.emailAddress.trim().toLowerCase();
+    const cleanUsername = rawData.username.includes("@") ? rawData.username.trim() : cleanEmail;
+    const cleanSmtpHost = rawData.smtpHost?.trim() || "smtp.hostinger.com";
+    const cleanImapHost = rawData.imapHost?.trim() || "imap.hostinger.com";
+
+    const data = {
+      ...rawData,
+      emailAddress: cleanEmail,
+      username: cleanUsername,
+      smtpHost: cleanSmtpHost,
+      imapHost: cleanImapHost,
+    };
 
     const credsChanged =
       Boolean(data.password) ||

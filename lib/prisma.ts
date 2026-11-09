@@ -1,27 +1,21 @@
 import { PrismaClient } from "@prisma/client";
 import { createFallbackModel } from "./fallback-db";
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient; rawPrisma?: PrismaClient };
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient; rawPrisma?: PrismaClient | null };
 
-const rawPrisma = globalForPrisma.rawPrisma ?? new PrismaClient();
-if (process.env.NODE_ENV !== "production") globalForPrisma.rawPrisma = rawPrisma;
-
-function isConnectionError(err: any): boolean {
-  if (!err) return false;
-  const msg = String(err.message || err.code || err);
-  return (
-    msg.includes("P1001") ||
-    msg.includes("P1000") ||
-    msg.includes("Can't reach database") ||
-    msg.includes("ECONNREFUSED") ||
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("connect") ||
-    msg.includes("Environment variable not found") ||
-    msg.includes("Authentication failed") ||
-    msg.includes("database server") ||
-    msg.includes("not connected")
-  );
+let rawPrisma: PrismaClient | null = null;
+try {
+  rawPrisma = globalForPrisma.rawPrisma ?? new PrismaClient();
+  if (process.env.NODE_ENV !== "production") globalForPrisma.rawPrisma = rawPrisma;
+} catch (e) {
+  console.warn("PrismaClient initialization skipped:", e);
 }
+
+let fallbackActive = Boolean(
+  !rawPrisma ||
+  !process.env.DATABASE_URL ||
+  (process.env.VERCEL && (process.env.DATABASE_URL.includes("localhost") || process.env.DATABASE_URL.includes("127.0.0.1")))
+);
 
 const fallbackModels: Record<string, any> = {};
 
@@ -32,7 +26,7 @@ function getFallbackModel(prop: string) {
   return fallbackModels[prop];
 }
 
-export const prisma = new Proxy(rawPrisma as any, {
+export const prisma = new Proxy((rawPrisma ?? {}) as any, {
   get(target, prop, receiver) {
     if (typeof prop !== "string") {
       return Reflect.get(target, prop, receiver);
@@ -40,16 +34,24 @@ export const prisma = new Proxy(rawPrisma as any, {
 
     if (prop === "$transaction") {
       return async function (arg: any) {
+        if (fallbackActive || !rawPrisma) {
+          if (Array.isArray(arg)) {
+            return Promise.all(arg);
+          }
+          if (typeof arg === "function") {
+            return await arg(prisma);
+          }
+        }
         try {
           return await target.$transaction(arg);
-        } catch (err) {
-          if (isConnectionError(err)) {
-            if (Array.isArray(arg)) {
-              return Promise.all(arg);
-            }
-            if (typeof arg === "function") {
-              return await arg(prisma);
-            }
+        } catch (err: any) {
+          console.warn("Prisma transaction failed, falling back:", err?.message || err);
+          fallbackActive = true;
+          if (Array.isArray(arg)) {
+            return Promise.all(arg);
+          }
+          if (typeof arg === "function") {
+            return await arg(prisma);
           }
           throw err;
         }
@@ -58,6 +60,7 @@ export const prisma = new Proxy(rawPrisma as any, {
 
     if (prop === "$connect") {
       return async () => {
+        if (fallbackActive || !rawPrisma) return;
         try {
           return await target.$connect();
         } catch {}
@@ -66,17 +69,23 @@ export const prisma = new Proxy(rawPrisma as any, {
 
     if (prop === "$disconnect") {
       return async () => {
+        if (fallbackActive || !rawPrisma) return;
         try {
           return await target.$disconnect();
         } catch {}
       };
     }
 
+    const fallback = getFallbackModel(prop);
+
+    if (fallbackActive || !rawPrisma) {
+      return fallback;
+    }
+
     const originalProp = Reflect.get(target, prop, receiver);
 
     // If accessing a model property (e.g. user, contact, mailbox, campaign, etc.)
     if (originalProp && typeof originalProp === "object") {
-      const fallback = getFallbackModel(prop);
       return new Proxy(originalProp, {
         get(modelTarget, method, methodReceiver) {
           if (typeof method !== "string") {
@@ -89,14 +98,24 @@ export const prisma = new Proxy(rawPrisma as any, {
           }
 
           return async function (...args: any[]) {
+            if (fallbackActive) {
+              const fallbackMethod = fallback[method];
+              if (typeof fallbackMethod === "function") {
+                return await fallbackMethod.apply(fallback, args);
+              }
+            }
+
             try {
               return await originalMethod.apply(modelTarget, args);
-            } catch (err) {
-              if (isConnectionError(err)) {
-                const fallbackMethod = fallback[method];
-                if (typeof fallbackMethod === "function") {
-                  return await fallbackMethod.apply(fallback, args);
-                }
+            } catch (err: any) {
+              console.warn(
+                `Prisma query failed on ${prop}.${method}, falling back to resilient store:`,
+                err?.message || err
+              );
+              fallbackActive = true;
+              const fallbackMethod = fallback[method];
+              if (typeof fallbackMethod === "function") {
+                return await fallbackMethod.apply(fallback, args);
               }
               throw err;
             }
@@ -106,8 +125,8 @@ export const prisma = new Proxy(rawPrisma as any, {
     }
 
     // Direct fallback for models not yet instantiated on rawPrisma
-    if (!originalProp && typeof prop === "string" && !prop.startsWith("$") && !prop.startsWith("_")) {
-      return getFallbackModel(prop);
+    if (typeof prop === "string" && !prop.startsWith("$") && !prop.startsWith("_")) {
+      return fallback;
     }
 
     return originalProp;

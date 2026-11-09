@@ -14,6 +14,8 @@ export function createImapClient(config: MailConnectionConfig) {
     secure: config.security === "TLS",
     auth: { user: config.username, pass: config.password },
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
     socketTimeout: 20_000,
     logger: false,
   });

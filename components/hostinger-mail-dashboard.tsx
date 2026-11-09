@@ -997,6 +997,38 @@ export function HostingerMailDashboard() {
     setTimeout(() => setDraftNotice(""), 2500);
   }
 
+  async function handleSaveAsTemplate() {
+    if (!composeSubject.trim() && !composeBody.trim()) {
+      alert("Please write a subject or message body first to save as a template.");
+      return;
+    }
+    const tplName = window.prompt("Enter a name for this template:", composeSubject.slice(0, 32) || "New Template");
+    if (!tplName || !tplName.trim()) return;
+
+    try {
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: tplName.trim(),
+          subject: composeSubject.trim() || "(No Subject)",
+          body: composeBody.trim() || "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save template");
+      if (data.template) {
+        setTemplates((prev) => [data.template, ...prev]);
+      }
+      setTemplateMenuOpen(false);
+      setDraftNotice(`✓ Saved as template "${tplName.trim()}"!`);
+      setTimeout(() => setDraftNotice(""), 3000);
+    } catch (err: any) {
+      alert(err.message || "Failed to save template");
+    }
+  }
+
   async function handleSaveDraft() {
     if (!composeTo.trim() && !composeSubject.trim() && !composeBody.trim()) {
       setDraftNotice("Cannot save empty draft");
@@ -2492,33 +2524,57 @@ export function HostingerMailDashboard() {
                   </svg>
                 </button>
 
-                {/* Templates Popup Menu */}
+                {/* Templates Popup Menu (Real Hostinger Options) */}
                 {templateMenuOpen && (
-                  <div className="absolute bottom-11 left-0 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 p-2 z-50 animate-in fade-in zoom-in-95 text-gray-800">
-                    <div className="text-[10px] font-bold text-gray-500 uppercase px-2.5 py-1 tracking-wider">
-                      Select Template to Apply
+                  <div className="absolute bottom-11 left-0 w-72 bg-white rounded-2xl shadow-xl border border-gray-200 p-2.5 z-50 animate-in fade-in zoom-in-95 text-gray-800">
+                    <div className="flex items-center justify-between text-[10px] font-bold text-gray-500 uppercase px-2.5 py-1 tracking-wider border-b border-gray-100 pb-1.5 mb-1.5">
+                      <span>Templates ({templates.length})</span>
+                      <a href="/templates" className="text-[#673DE6] hover:underline normal-case text-xs font-semibold">
+                        Manage &rarr;
+                      </a>
                     </div>
                     <div className="space-y-1 max-h-52 overflow-y-auto">
-                      {templates.map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => {
-                            handleApplyTemplate(t.id);
-                            setTemplateMenuOpen(false);
-                            setDraftNotice(`✓ Applied template "${t.name}"`);
-                            setTimeout(() => setDraftNotice(""), 3000);
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-purple-50 text-xs font-semibold hover:text-[#673DE6] flex items-center justify-between transition cursor-pointer"
-                        >
-                          <span className="truncate">{t.name}</span>
-                          {t.isDefault && (
-                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                              Active
-                            </span>
-                          )}
-                        </button>
-                      ))}
+                      {templates.length === 0 ? (
+                        <div className="p-3 text-center text-xs text-gray-400">
+                          No saved templates yet
+                        </div>
+                      ) : (
+                        templates.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => {
+                              handleApplyTemplate(t.id);
+                              setTemplateMenuOpen(false);
+                              setDraftNotice(`✓ Applied template "${t.name}"`);
+                              setTimeout(() => setDraftNotice(""), 3000);
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-purple-50 text-xs font-semibold hover:text-[#673DE6] flex items-center justify-between transition cursor-pointer"
+                          >
+                            <span className="truncate">{t.name}</span>
+                            {t.isDefault && (
+                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                Active
+                              </span>
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="pt-2 mt-1.5 border-t border-gray-100 flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={handleSaveAsTemplate}
+                        className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold text-[#673DE6] hover:bg-purple-50 flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <span>➕</span> Save draft as new template
+                      </button>
+                      <a
+                        href="/templates"
+                        className="w-full text-left px-2.5 py-1 rounded-xl text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 flex items-center gap-1.5 transition"
+                      >
+                        <span>⚙️</span> Manage all templates
+                      </a>
                     </div>
                   </div>
                 )}
