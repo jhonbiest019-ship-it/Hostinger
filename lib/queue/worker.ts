@@ -231,3 +231,12 @@ export async function processDueJobs(options: { blockedMailboxIds?: string[] } =
     return { discovered: due.length, processed, sent, failed, recovered: recovery };
   })).value ?? { discovered: 0, processed: 0, sent: 0, failed: 0, skipped: "lease-held" };
 }
+
+// Continuous background queue dispatcher
+// Runs every 10 seconds on the server to guarantee queued sends never stall
+if (typeof window === "undefined" && !(globalThis as any).__worker_loop_active) {
+  (globalThis as any).__worker_loop_active = true;
+  setInterval(() => {
+    void processDueJobs().catch(() => {});
+  }, 10_000);
+}
