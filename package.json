@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postinstall": "prisma generate",
     "start": "next start",
     "worker": "tsx scripts/worker.ts",
     "worker:once": "tsx scripts/worker.ts --once",
