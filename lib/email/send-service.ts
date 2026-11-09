@@ -24,54 +24,97 @@ export type MailboxSenderInfo = {
 
 async function appendToSentFolder(
   mailbox: MailboxSenderInfo,
-  emailData: { from: string; to: string; subject: string; text: string; html?: string }
+  emailData: { from: string; to: string; subject: string; text: string; html?: string; messageId?: string }
 ) {
-  if (!mailbox.imapHost || !mailbox.username || !mailbox.encryptedCredentials) return;
+  if (!mailbox.username || !mailbox.encryptedCredentials) return;
   try {
     const password = passwordFromMailbox(mailbox.encryptedCredentials);
+    // Resolve IMAP host for Hostinger or custom domain
+    const imapHost =
+      mailbox.imapHost ||
+      (mailbox.smtpHost?.includes("hostinger.com") ? "imap.hostinger.com" : null) ||
+      (mailbox.emailAddress.includes("@") ? `imap.${mailbox.emailAddress.split("@")[1]}` : null) ||
+      "imap.hostinger.com";
+    const imapPort = mailbox.imapPort || 993;
+    const imapSecurity = mailbox.imapSecurity || "TLS";
+    const imapUser = mailbox.username || mailbox.emailAddress;
+
     const client = new ImapFlow({
-      host: mailbox.imapHost,
-      port: mailbox.imapPort || 993,
-      secure: (mailbox.imapSecurity || "TLS") === "TLS",
-      auth: { user: mailbox.username, pass: password },
+      host: imapHost,
+      port: imapPort,
+      secure: imapSecurity === "TLS" || imapPort === 993,
+      auth: { user: imapUser, pass: password },
       tls: { rejectUnauthorized: false },
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 20_000,
       logger: false,
     });
+
     await client.connect();
     try {
-      const folders = await client.list();
-      const sentFolder =
-        folders.find((f) => f.specialUse === "\\Sent")?.path ||
-        folders.find((f) => /sent/i.test(f.path))?.path ||
-        "INBOX.Sent";
+      let folders: Array<{ path: string; name?: string; specialUse?: string }> = [];
+      try {
+        folders = await client.list();
+      } catch {
+        folders = [];
+      }
 
-      const boundary = "----=_Part_" + Date.now();
+      // Hostinger / Dovecot Sent folder detection
+      const sentCandidate =
+        folders.find((f) => f.specialUse === "\\Sent")?.path ||
+        folders.find((f) => /^(sent|inbox\.sent|sent messages|sent items)$/i.test(f.path))?.path ||
+        folders.find((f) => /sent/i.test(f.name || f.path))?.path ||
+        "Sent";
+
+      const domain = mailbox.emailAddress.includes("@") ? mailbox.emailAddress.split("@")[1] : "hostinger.com";
+      const cleanMsgId = emailData.messageId
+        ? (emailData.messageId.startsWith("<") ? emailData.messageId : `<${emailData.messageId}>`)
+        : `<${Date.now()}.${Math.random().toString(36).substring(2, 9)}@${domain}>`;
+
+      const boundary = "----=_Part_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
       const rawMime = [
         `From: ${emailData.from}`,
         `To: ${emailData.to}`,
         `Subject: ${emailData.subject}`,
         `Date: ${new Date().toUTCString()}`,
+        `Message-ID: ${cleanMsgId}`,
         `MIME-Version: 1.0`,
         `Content-Type: multipart/alternative; boundary="${boundary}"`,
         ``,
         `--${boundary}`,
         `Content-Type: text/plain; charset=utf-8`,
-        `Content-Transfer-Encoding: 7bit`,
+        `Content-Transfer-Encoding: 8bit`,
         ``,
         emailData.text,
         ``,
         `--${boundary}`,
         `Content-Type: text/html; charset=utf-8`,
-        `Content-Transfer-Encoding: 7bit`,
+        `Content-Transfer-Encoding: 8bit`,
         ``,
         emailData.html || emailData.text,
         ``,
         `--${boundary}--`,
+        ``,
       ].join("\r\n");
 
-      const appendResult = await client.append(sentFolder, Buffer.from(rawMime), ["\\Seen"]);
-      if (mailbox.id && appendResult && typeof appendResult.uid === "number") {
-        updateMailboxSyncState(mailbox.id, { sentUid: appendResult.uid });
+      // Candidate folders for Hostinger webmail
+      const targets = [sentCandidate, "INBOX.Sent", "Sent", "Sent Messages", "Sent Items"].filter(
+        (v, i, a) => v && a.indexOf(v) === i
+      );
+
+      for (const targetFolder of targets) {
+        try {
+          const appendResult = await client.append(targetFolder, Buffer.from(rawMime), ["\\Seen"]);
+          if (appendResult) {
+            if (mailbox.id && typeof appendResult.uid === "number") {
+              updateMailboxSyncState(mailbox.id, { sentUid: appendResult.uid });
+            }
+            break;
+          }
+        } catch {
+          // try next candidate target
+        }
       }
     } finally {
       await client.logout().catch(() => undefined);
@@ -135,20 +178,17 @@ export async function sendFromMailbox(
   );
 
   // Real-time synchronization: Append sent message to Hostinger IMAP Sent folder
-  try {
-    await Promise.race([
-      appendToSentFolder(mailbox, {
-        from: formattedFrom,
-        to: data.to,
-        subject: data.subject,
-        text: textBody,
-        html: htmlBody,
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("IMAP Sent sync timed out")), 8000)),
-    ]);
-  } catch (err) {
-    console.warn("Could not append sent message to IMAP Sent folder:", err);
-  }
+  // Backgrounded and non-blocking so SMTP delivery is instant and resilient
+  void appendToSentFolder(mailbox, {
+    from: formattedFrom,
+    to: data.to,
+    subject: data.subject,
+    text: textBody,
+    html: htmlBody,
+    messageId: sendResult?.messageId,
+  }).catch((err) => {
+    console.warn("Background Hostinger Sent sync notice:", err);
+  });
 
   return sendResult;
 }

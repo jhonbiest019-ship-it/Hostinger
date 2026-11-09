@@ -12,7 +12,12 @@ import { syncRecipientToGoogleSheet } from "@/lib/google-sheets-sync";
 
 export async function recoverExpiredJobs() {
   const now = new Date();
-  const expired = await prisma.scheduledJob.findMany({ where: { status: "PROCESSING", leaseExpiresAt: { lt: now } } });
+  const expired = await prisma.scheduledJob.findMany({
+    where: {
+      status: "PROCESSING",
+      OR: [{ leaseExpiresAt: { lt: now } }, { leaseExpiresAt: null }],
+    },
+  });
   let requeued = 0; let ambiguous = 0;
   for (const job of expired) {
     const safe = job.deliveryState === "NOT_STARTED";

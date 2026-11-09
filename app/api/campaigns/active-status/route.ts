@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
+import { processDueJobs } from "@/lib/queue/worker";
 
 export async function GET(request: NextRequest) {
   try {
@@ -113,6 +114,11 @@ export async function GET(request: NextRequest) {
 
     const isSending = activeList.some((c) => c.isCurrentlyDispatching);
     const hasActiveSchedules = activeList.length > 0 || directScheduledCount > 0;
+
+    // Trigger queue processing in real time if any jobs or schedules are active
+    if (isSending || hasActiveSchedules) {
+      void processDueJobs().catch(() => {});
+    }
 
     return NextResponse.json({
       success: true,
