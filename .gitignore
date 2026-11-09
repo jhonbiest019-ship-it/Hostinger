@@ -15,3 +15,5 @@ backups/
 
 .local-tools/
 .local-run/
+
+.vercel
