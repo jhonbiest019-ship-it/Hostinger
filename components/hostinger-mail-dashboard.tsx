@@ -110,7 +110,9 @@ export function HostingerMailDashboard() {
   const [attachments, setAttachments] = useState<Array<{ name: string; size: number; type: string }>>([]);
   const [draftNotice, setDraftNotice] = useState("");
   const [draftSaving, setDraftSaving] = useState(false);
+  const [showAiPromptBar, setShowAiPromptBar] = useState(true);
 
+  const aiInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -896,19 +898,39 @@ export function HostingerMailDashboard() {
     }
   }
 
-  // AI draft generator
+  // AI draft generator with real-time prompt parsing
   function handleGenerateAI() {
     if (!aiPrompt.trim()) return;
     setAiGenerating(true);
     setTimeout(() => {
-      const generatedSubject = `Following up on ${aiPrompt.slice(0, 30)}...`;
-      const generatedBody = `Hi there,\n\nI hope this email finds you well.\n\nI'm reaching out regarding ${aiPrompt}.\n\nWe would love to discuss how we can work together to achieve your goals. Looking forward to hearing from you soon.\n\nBest regards,\nOutreach Team`;
-      setComposeSubject(generatedSubject);
-      setComposeBody(generatedBody);
+      const p = aiPrompt.trim().toLowerCase();
+      const bName = lastScheduledBrand?.brandName || (composeTo ? composeTo.split("@")[0] : "Team");
+      let subj = "";
+      let body = "";
+
+      if (p.includes("wholesale") || p.includes("partnership") || p.includes("retail") || p.includes("distribut")) {
+        subj = `Wholesale Partnership Opportunity — ${bName}`;
+        body = `Hi ${bName},\n\nI hope you're having a great week.\n\nI'm reaching out because we're very impressed by your product catalog and brand reputation. We manage an active retail and distribution network and are currently expanding our direct partner portfolio.\n\nWe would love to discuss opening a wholesale account with ${bName} to collaborate on mutually beneficial terms.\n\nCould you please share your latest wholesale pricing, catalog, and minimum order requirements (MOQ)?\n\nLooking forward to speaking with you.\n\nBest regards,\nDavid Lucas\nPartnership & Outreach Director`;
+      } else if (p.includes("follow") || p.includes("reminder") || p.includes("update") || p.includes("check")) {
+        subj = `Following up regarding our collaboration: ${bName}`;
+        body = `Hi ${bName},\n\nFollowing up on our earlier note to see if you had a moment to review.\n\nI understand you must be very busy, so I'll keep this brief. We are keen to discuss a collaboration and would welcome a brief 5-minute call at your earliest convenience.\n\nLooking forward to your thoughts.\n\nWarm regards,\nDavid Lucas`;
+      } else if (p.includes("order") || p.includes("price") || p.includes("quote") || p.includes("inquiry")) {
+        subj = `Catalog & Pricing Inquiry: ${bName}`;
+        body = `Hello ${bName},\n\nI am contacting you regarding ${aiPrompt.trim()}.\n\nCould you please provide your current price list, shipping options, and estimated lead times? We are looking to place an order shortly upon review.\n\nThank you for your assistance.\n\nBest regards,\nDavid Lucas`;
+      } else {
+        const capitalPrompt = aiPrompt.trim().charAt(0).toUpperCase() + aiPrompt.trim().slice(1);
+        subj = `${capitalPrompt.slice(0, 48)}`;
+        body = `Hi ${bName},\n\nI hope you are doing well.\n\nI'm writing regarding ${aiPrompt.trim()}.\n\nWe would love to connect and explore how we can coordinate on this effectively. Please let me know what day and time suits you best for a brief chat.\n\nBest regards,\nDavid Lucas`;
+      }
+
+      setComposeSubject(subj);
+      setComposeBody(body);
       setAiGenerating(false);
       setAiModalOpen(false);
       setComposeOpen(true);
-    }, 900);
+      setDraftNotice("✨ AI drafted message successfully!");
+      setTimeout(() => setDraftNotice(""), 3500);
+    }, 600);
   }
 
   // Formatting Bar helper
@@ -2259,6 +2281,59 @@ export function HostingerMailDashboard() {
             className="hidden"
           />
 
+          {/* Real-time Hostinger AI Message Prompt Bar (Matches Hostinger Webmail) */}
+          {showAiPromptBar && (
+            <div className="px-4 pb-2.5">
+              <div className="rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-sky-400 p-[1.5px] shadow-sm">
+                <div className="flex items-center gap-3 bg-white rounded-full px-4 py-2">
+                  {/* Wand with Sparkles Icon */}
+                  <svg className="w-5 h-5 text-gray-700 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.091zM18.25 12l.406 1.423a2.25 2.25 0 001.545 1.545L21.75 15l-1.549.406a2.25 2.25 0 00-1.545 1.545L18.25 18.25l-.406-1.549a2.25 2.25 0 00-1.545-1.545L14.75 15l1.549-.406a2.25 2.25 0 001.545-1.545L18.25 12z" />
+                  </svg>
+
+                  <input
+                    ref={aiInputRef}
+                    type="text"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleGenerateAI();
+                      }
+                    }}
+                    placeholder="Ask AI to draft a message"
+                    className="flex-1 bg-transparent text-xs sm:text-sm text-gray-900 placeholder-gray-500 focus:outline-none"
+                  />
+
+                  {/* Up-arrow Submit Button */}
+                  <button
+                    type="button"
+                    onClick={handleGenerateAI}
+                    disabled={aiGenerating || !aiPrompt.trim()}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition ${
+                      aiPrompt.trim()
+                        ? "bg-gray-800 hover:bg-black text-white shadow-xs cursor-pointer"
+                        : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                    }`}
+                    title="Generate draft with AI"
+                  >
+                    {aiGenerating ? (
+                      <svg className="w-3.5 h-3.5 animate-spin text-purple-600" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Bottom Bar: Exact Hostinger Webmail Compose Toolbar Layout */}
           <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50/80 px-4 py-2.5">
             {/* Left Controls: Send [v], AI, Formatting, Attach, Link, Image | Preview, Template, Signature */}
@@ -2317,15 +2392,22 @@ export function HostingerMailDashboard() {
                 )}
               </div>
 
-              {/* 2. AI Assistant Icon (✨) */}
+              {/* 2. AI Assistant Icon (🪄) */}
               <button
                 type="button"
-                onClick={() => setAiModalOpen(true)}
-                className="w-8 h-8 rounded-xl bg-purple-50 text-[#673DE6] hover:bg-purple-100 flex items-center justify-center transition border border-purple-200/60 cursor-pointer shadow-2xs"
-                title="AI Draft Assistant (✨)"
+                onClick={() => {
+                  setShowAiPromptBar((prev) => !prev);
+                  setTimeout(() => aiInputRef.current?.focus(), 50);
+                }}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition border cursor-pointer shadow-2xs ${
+                  showAiPromptBar
+                    ? "bg-purple-100 text-[#673DE6] border-purple-300"
+                    : "bg-purple-50 text-[#673DE6] hover:bg-purple-100 border-purple-200/60"
+                }`}
+                title="Toggle AI Draft bar (🪄)"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                <svg className="w-4 h-4 text-[#673DE6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.091zM18.25 12l.406 1.423a2.25 2.25 0 001.545 1.545L21.75 15l-1.549.406a2.25 2.25 0 00-1.545 1.545L18.25 18.25l-.406-1.549a2.25 2.25 0 00-1.545-1.545L14.75 15l1.549-.406a2.25 2.25 0 001.545-1.545L18.25 12z" />
                 </svg>
               </button>
 

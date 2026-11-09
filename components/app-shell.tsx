@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { formatEmailBodyToHtml, renderTemplate } from "@/lib/email/template";
 
 interface MailFolderItem {
   name: string;
@@ -457,6 +458,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
 
+  // Real-time Hostinger compose states & refs (Matches Hostinger Webmail)
+  const [showAiPromptBar, setShowAiPromptBar] = useState(true);
+  const [formatToolbarOpen, setFormatToolbarOpen] = useState(false);
+  const [composePreviewMode, setComposePreviewMode] = useState(false);
+  const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false);
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [scheduleSendModalOpen, setScheduleSendModalOpen] = useState(false);
+  const [scheduleSendDate, setScheduleSendDate] = useState("");
+  const [scheduleSendTime, setScheduleSendTime] = useState("10:00");
+  const [attachments, setAttachments] = useState<Array<{ name: string; size: number; type: string }>>([]);
+  const [draftNotice, setDraftNotice] = useState("");
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+
+  const aiInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const scheduleMenuRef = useRef<HTMLDivElement>(null);
+  const templateMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close compose popups when clicking outside
+  useEffect(() => {
+    function handleComposePopupsClickOutside(event: MouseEvent) {
+      if (scheduleMenuRef.current && !scheduleMenuRef.current.contains(event.target as Node)) {
+        setScheduleMenuOpen(false);
+      }
+      if (templateMenuRef.current && !templateMenuRef.current.contains(event.target as Node)) {
+        setTemplateMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleComposePopupsClickOutside);
+    return () => document.removeEventListener("mousedown", handleComposePopupsClickOutside);
+  }, []);
+
   // Fetch last scheduled brand whenever compose opens
   useEffect(() => {
     fetch("/api/scheduled/last-brand")
@@ -765,11 +801,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         alert(result.error || "Failed to send email.");
       } else {
         alert(`✓ Email sent in real time from ${selectedSender?.emailAddress || "your mailbox"} to ${composeTo.trim()}!`);
-        setComposeOpen(false);
-        setComposeTo("");
-        setComposeSubject("");
-        setComposeBody("");
+        handleResetCompose();
         router.refresh();
+        window.dispatchEvent(new CustomEvent("mail-counts-updated"));
       }
     } catch (err: any) {
       alert(err.message || "Failed to send email.");
@@ -778,18 +812,200 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }
 
+  // AI draft generator with real-time prompt parsing
   function handleGenerateAI() {
     if (!aiPrompt.trim()) return;
     setAiGenerating(true);
     setTimeout(() => {
-      setComposeSubject(`Re: ${aiPrompt.slice(0, 30)}...`);
-      setComposeBody(
-        `Hi,\n\nI hope you're having a productive week.\n\nFollowing up regarding ${aiPrompt}.\n\nWould you be open to a quick 10-minute chat this week to explore this further?\n\nBest regards,\n${userName}`
-      );
+      const p = aiPrompt.trim().toLowerCase();
+      const bName = lastScheduledBrand?.brandName || (composeTo ? composeTo.split("@")[0] : "Team");
+      let subj = "";
+      let body = "";
+
+      if (p.includes("wholesale") || p.includes("partnership") || p.includes("retail") || p.includes("distribut")) {
+        subj = `Wholesale Partnership Opportunity — ${bName}`;
+        body = `Hi ${bName},\n\nI hope you're having a great week.\n\nI'm reaching out because we're very impressed by your product catalog and brand reputation. We manage an active retail and distribution network and are currently expanding our direct partner portfolio.\n\nWe would love to discuss opening a wholesale account with ${bName} to collaborate on mutually beneficial terms.\n\nCould you please share your latest wholesale pricing, catalog, and minimum order requirements (MOQ)?\n\nLooking forward to speaking with you.\n\nBest regards,\nDavid Lucas\nPartnership & Outreach Director`;
+      } else if (p.includes("follow") || p.includes("reminder") || p.includes("update") || p.includes("check")) {
+        subj = `Following up regarding our collaboration: ${bName}`;
+        body = `Hi ${bName},\n\nFollowing up on our earlier note to see if you had a moment to review.\n\nI understand you must be very busy, so I'll keep this brief. We are keen to discuss a collaboration and would welcome a brief 5-minute call at your earliest convenience.\n\nLooking forward to your thoughts.\n\nWarm regards,\nDavid Lucas`;
+      } else if (p.includes("order") || p.includes("price") || p.includes("quote") || p.includes("inquiry")) {
+        subj = `Catalog & Pricing Inquiry: ${bName}`;
+        body = `Hello ${bName},\n\nI am contacting you regarding ${aiPrompt.trim()}.\n\nCould you please provide your current price list, shipping options, and estimated lead times? We are looking to place an order shortly upon review.\n\nThank you for your assistance.\n\nBest regards,\nDavid Lucas`;
+      } else {
+        const capitalPrompt = aiPrompt.trim().charAt(0).toUpperCase() + aiPrompt.trim().slice(1);
+        subj = `${capitalPrompt.slice(0, 48)}`;
+        body = `Hi ${bName},\n\nI hope you are doing well.\n\nI'm writing regarding ${aiPrompt.trim()}.\n\nWe would love to connect and explore how we can coordinate on this effectively. Please let me know what day and time suits you best for a brief chat.\n\nBest regards,\nDavid Lucas`;
+      }
+
+      setComposeSubject(subj);
+      setComposeBody(body);
       setAiGenerating(false);
       setAiModalOpen(false);
       setComposeOpen(true);
-    }, 800);
+      setDraftNotice("✨ AI drafted message successfully!");
+      setTimeout(() => setDraftNotice(""), 3500);
+    }, 600);
+  }
+
+  // Formatting Bar helper
+  function applyFormatting(prefix: string, suffix: string = prefix, placeholder: string = "") {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selected = text.slice(start, end) || placeholder;
+    const replacement = `${prefix}${selected}${suffix}`;
+    const newBody = text.slice(0, start) + replacement + text.slice(end);
+    setComposeBody(newBody);
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
+    }, 0);
+  }
+
+  function handleInsertLink() {
+    const url = window.prompt("Enter link URL (e.g. https://example.com):", "https://");
+    if (!url) return;
+    const text = window.prompt("Enter link display text (optional):", url);
+    applyFormatting(`[${text || url}](`, ")", url);
+  }
+
+  function handleAttachFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []).map((f) => ({
+      name: f.name,
+      size: f.size,
+      type: f.type,
+    }));
+    if (files.length > 0) {
+      setAttachments((prev) => [...prev, ...files]);
+      setDraftNotice(`✓ ${files.length} file(s) attached`);
+      setTimeout(() => setDraftNotice(""), 3000);
+    }
+    if (e.target) e.target.value = "";
+  }
+
+  function handleAttachImages(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []).map((f) => ({
+      name: f.name,
+      size: f.size,
+      type: f.type || "image/png",
+    }));
+    if (files.length > 0) {
+      setAttachments((prev) => [...prev, ...files]);
+      setDraftNotice(`✓ ${files.length} image(s) attached`);
+      setTimeout(() => setDraftNotice(""), 3000);
+    }
+    if (e.target) e.target.value = "";
+  }
+
+  function handleInsertSignature() {
+    const sig = `\n\n--\nDavid Lucas          |  📞 352-695-1331\nSales Manager        |  ✉️ sales@qayyumestore.com\nQAYYUM ESTORE        |  📍 7901 4TH ST N STE 20723`;
+    if (composeBody.includes("David Lucas") && composeBody.includes("352-695-1331")) {
+      setDraftNotice("Signature already in email");
+      setTimeout(() => setDraftNotice(""), 2500);
+      return;
+    }
+    setComposeBody((prev) => (prev ? prev.trimEnd() + sig : sig.trimStart()));
+    setDraftNotice("✓ David Lucas signature added");
+    setTimeout(() => setDraftNotice(""), 2500);
+  }
+
+  async function handleSaveDraft() {
+    if (!composeTo.trim() && !composeSubject.trim() && !composeBody.trim()) {
+      setDraftNotice("Cannot save empty draft");
+      setTimeout(() => setDraftNotice(""), 2500);
+      return;
+    }
+    const targetMailboxId = composeMailboxId || mailboxes[0]?.id;
+    if (!targetMailboxId) {
+      setDraftNotice("No active sender mailbox");
+      setTimeout(() => setDraftNotice(""), 2500);
+      return;
+    }
+    setDraftSaving(true);
+    setDraftNotice("Saving draft...");
+    try {
+      const res = await fetch("/api/inbox", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mailboxId: targetMailboxId,
+          toAddress: composeTo.trim(),
+          subject: composeSubject.trim() || "(No Subject)",
+          body: composeBody,
+          draftId: composeDraftId || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save draft");
+      if (data.draftId) setComposeDraftId(data.draftId);
+      setDraftNotice("✓ Draft saved!");
+      setTimeout(() => setDraftNotice(""), 3000);
+      window.dispatchEvent(new CustomEvent("mail-counts-updated"));
+    } catch (err: any) {
+      setDraftNotice(err.message || "Failed to save draft");
+      setTimeout(() => setDraftNotice(""), 3000);
+    } finally {
+      setDraftSaving(false);
+    }
+  }
+
+  async function handleExecuteScheduleSend() {
+    if (!composeTo.trim()) {
+      alert("Please enter recipient email.");
+      return;
+    }
+    if (!scheduleSendDate || !scheduleSendTime) {
+      alert("Please choose a schedule date and time.");
+      return;
+    }
+    const targetMailboxId = composeMailboxId || mailboxes[0]?.id;
+    if (!targetMailboxId) {
+      alert("No active sender mailbox available.");
+      return;
+    }
+    const scheduledDateTime = `${scheduleSendDate}T${scheduleSendTime}`;
+    setComposeSending(true);
+    try {
+      const res = await fetch("/api/scheduled/direct", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          recipientEmail: composeTo.trim(),
+          scheduleTime: scheduledDateTime,
+          subject: composeSubject.trim() || "Outreach Proposal",
+          body: composeBody.trim() || "",
+          mailboxId: targetMailboxId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to schedule send.");
+      alert(`✓ Email scheduled for ${scheduledDateTime} to ${composeTo.trim()}!`);
+      setScheduleSendModalOpen(false);
+      handleResetCompose();
+      window.dispatchEvent(new CustomEvent("mail-counts-updated"));
+    } catch (err: any) {
+      alert(err.message || "Scheduling failed.");
+    } finally {
+      setComposeSending(false);
+    }
+  }
+
+  function handleResetCompose() {
+    setComposeTo("");
+    setComposeSubject("");
+    setComposeBody("");
+    setAttachments([]);
+    setComposeDraftId(null);
+    setFormatToolbarOpen(false);
+    setComposePreviewMode(false);
+    setScheduleMenuOpen(false);
+    setTemplateMenuOpen(false);
+    setDraftNotice("");
+    setComposeOpen(false);
   }
 
   // Folder navigation (Hostinger Mail style)
@@ -1158,22 +1374,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
 
-      {/* Floating Compose Dialog */}
+      {/* Floating Compose Dialog - Exact Hostinger Webmail Layout */}
       {composeOpen && (
-        <div className="fixed bottom-4 right-4 sm:right-6 w-[560px] max-w-[95vw] rounded-2xl bg-white shadow-2xl border border-gray-200 z-50 overflow-hidden flex flex-col animate-fade-in">
+        <div className="fixed bottom-4 right-4 sm:right-6 w-[640px] max-w-[96vw] rounded-2xl bg-white shadow-2xl border border-gray-200 z-50 overflow-hidden flex flex-col animate-fade-in">
+          {/* Header */}
           <div className="flex items-center justify-between bg-[#18181B] px-5 py-3 text-white">
-            <span className="text-xs font-semibold tracking-wide">New message</span>
-            <button
-              onClick={() => setComposeOpen(false)}
-              className="text-gray-400 hover:text-white p-1 text-sm"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold tracking-wide">New message</span>
+              {composeDraftId && (
+                <span className="text-[10px] bg-purple-500/30 text-purple-200 px-2 py-0.5 rounded-full font-mono">
+                  Draft saved
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-gray-400">
+              <button
+                onClick={handleResetCompose}
+                className="hover:text-white text-base leading-none p-1 transition cursor-pointer"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           {/* Form Fields */}
-          <div className="p-4 space-y-2.5">
-            {/* From: Clean Hostinger Sender Row (Same like Hostinger Webmail) */}
+          <div className="p-4 space-y-2.5 max-h-[75vh] overflow-y-auto">
+            {/* From: Clean Hostinger Sender Row */}
             <div className="flex items-center border-b border-gray-100 pb-2 gap-2 text-xs sm:text-sm">
               <span className="text-gray-500 font-semibold w-12 shrink-0">From:</span>
               <div className="flex-1 flex items-center justify-between gap-2 min-w-0">
@@ -1228,7 +1455,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
 
-            {/* To: Recipient Email Row (Prominently mentioned) */}
+            {/* To: Recipient Email Row */}
             <div className="flex items-center border-b border-gray-100 py-2 gap-2 text-xs sm:text-sm">
               <span className="text-gray-500 font-semibold w-12 shrink-0">To:</span>
               <div className="flex-1 flex items-center justify-between gap-2 min-w-0">
@@ -1281,68 +1508,533 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               />
             </div>
 
-            {/* Body */}
-            <div>
-              <textarea
-                placeholder="Write your email here..."
-                rows={9}
-                value={composeBody}
-                onChange={(e) => setComposeBody(e.target.value)}
-                className="w-full text-xs sm:text-sm resize-none focus:outline-none placeholder-gray-400 leading-relaxed pt-1"
-              />
-            </div>
+            {/* Formatting Toolbar Strip (toggled by 'A' icon) */}
+            {formatToolbarOpen && !composePreviewMode && (
+              <div className="flex items-center flex-wrap gap-1 bg-gray-50 p-1.5 rounded-xl border border-gray-200 animate-in fade-in duration-100">
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("**", "**", "bold text")}
+                  className="px-2 py-1 text-xs font-extrabold text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Bold (**text**)"
+                >
+                  B
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("*", "*", "italic text")}
+                  className="px-2 py-1 text-xs italic font-serif text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Italic (*text*)"
+                >
+                  I
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("<u>", "</u>", "underlined text")}
+                  className="px-2 py-1 text-xs underline text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Underline"
+                >
+                  U
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("~~", "~~", "strikethrough text")}
+                  className="px-2 py-1 text-xs line-through text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Strikethrough"
+                >
+                  S
+                </button>
+                <div className="w-px h-4 bg-gray-300 mx-0.5" />
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("# ", "", "Heading 1")}
+                  className="px-2 py-1 text-[11px] font-bold text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Heading 1"
+                >
+                  H1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("## ", "", "Heading 2")}
+                  className="px-2 py-1 text-[11px] font-bold text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Heading 2"
+                >
+                  H2
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("- ", "", "List item")}
+                  className="px-2 py-1 text-xs text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Bullet list"
+                >
+                  • List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("1. ", "", "List item")}
+                  className="px-2 py-1 text-xs text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Numbered list"
+                >
+                  1. List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("> ", "", "Quote text")}
+                  className="px-2 py-1 text-xs text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Quote"
+                >
+                  &ldquo;
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyFormatting("`", "`", "code")}
+                  className="px-2 py-1 text-xs font-mono text-gray-700 hover:bg-white rounded-lg hover:shadow-2xs transition"
+                  title="Code snippet"
+                >
+                  &lt;/&gt;
+                </button>
+              </div>
+            )}
+
+            {/* Email Body / Live Preview */}
+            {composePreviewMode ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg border border-purple-200">
+                  <span className="font-bold flex items-center gap-1.5">
+                    <span>👁️</span> Recipient Brand Live View (Exact HTML &amp; Signature Layout)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setComposePreviewMode(false)}
+                    className="text-xs font-bold text-[#673DE6] hover:underline cursor-pointer"
+                  >
+                    Edit message &rarr;
+                  </button>
+                </div>
+                <div
+                  className="p-4 bg-white border border-gray-200 rounded-xl text-xs sm:text-sm text-gray-900 leading-relaxed font-sans shadow-2xs overflow-x-auto min-h-[180px] max-h-[300px]"
+                  dangerouslySetInnerHTML={{
+                    __html: formatEmailBodyToHtml(
+                      renderTemplate(composeBody, {
+                        brandName: lastScheduledBrand?.brandName || "Brand Name",
+                        productCategory: lastScheduledBrand?.category || "Product Category",
+                        email: composeTo || "recipient@example.com",
+                      })
+                    ),
+                  }}
+                />
+              </div>
+            ) : (
+              <div>
+                <textarea
+                  ref={textareaRef}
+                  placeholder="Write your email here... (Supports **bold**, dynamic tags like {{brandName}}, and 2-column signature)"
+                  rows={9}
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                  className="w-full text-xs sm:text-sm resize-none focus:outline-none placeholder-gray-400 leading-relaxed pt-1 font-sans"
+                />
+              </div>
+            )}
+
+            {/* Attachments Chip List */}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100">
+                {attachments.map((att, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-[11px] font-medium px-2.5 py-1 rounded-lg border border-gray-200 shadow-2xs transition"
+                  >
+                    <span>{att.type?.startsWith("image/") ? "🖼️" : "📎"}</span>
+                    <span className="truncate max-w-[140px] font-mono">{att.name}</span>
+                    <span className="text-[10px] text-gray-500">({Math.round(att.size / 1024)} KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+                      className="text-gray-400 hover:text-red-500 ml-1 font-bold cursor-pointer"
+                      title="Remove attachment"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Notification / Status bar inside Compose */}
+            {draftNotice && (
+              <div className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center justify-between animate-in fade-in">
+                <span>{draftNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setDraftNotice("")}
+                  className="text-purple-400 hover:text-purple-800 ml-2 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/70 px-4 py-3">
-            <div className="flex items-center gap-2">
+          {/* Hidden File Inputs for Attachments and Images */}
+          <input
+            type="file"
+            multiple
+            ref={fileInputRef}
+            onChange={handleAttachFiles}
+            className="hidden"
+          />
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            ref={imageInputRef}
+            onChange={handleAttachImages}
+            className="hidden"
+          />
+
+          {/* Real-time Hostinger AI Message Prompt Bar (Matches Hostinger Webmail) */}
+          {showAiPromptBar && (
+            <div className="px-4 pb-2.5">
+              <div className="rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-sky-400 p-[1.5px] shadow-sm">
+                <div className="flex items-center gap-3 bg-white rounded-full px-4 py-2">
+                  {/* Wand with Sparkles Icon */}
+                  <svg className="w-5 h-5 text-gray-700 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.091zM18.25 12l.406 1.423a2.25 2.25 0 001.545 1.545L21.75 15l-1.549.406a2.25 2.25 0 00-1.545 1.545L18.25 18.25l-.406-1.549a2.25 2.25 0 00-1.545-1.545L14.75 15l1.549-.406a2.25 2.25 0 001.545-1.545L18.25 12z" />
+                  </svg>
+
+                  <input
+                    ref={aiInputRef}
+                    type="text"
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleGenerateAI();
+                      }
+                    }}
+                    placeholder="Ask AI to draft a message"
+                    className="flex-1 bg-transparent text-xs sm:text-sm text-gray-900 placeholder-gray-500 focus:outline-none"
+                  />
+
+                  {/* Up-arrow Submit Button */}
+                  <button
+                    type="button"
+                    onClick={handleGenerateAI}
+                    disabled={aiGenerating || !aiPrompt.trim()}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 transition ${
+                      aiPrompt.trim()
+                        ? "bg-gray-800 hover:bg-black text-white shadow-xs cursor-pointer"
+                        : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                    }`}
+                    title="Generate draft with AI"
+                  >
+                    {aiGenerating ? (
+                      <svg className="w-3.5 h-3.5 animate-spin text-purple-600" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Bottom Bar: Exact Hostinger Webmail Compose Toolbar Layout */}
+          <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50/80 px-4 py-2.5">
+            {/* Left Controls: Send [v], AI, Formatting, Attach, Link, Image | Preview, Template, Signature */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {/* 1. Send Split Button with Caret Dropdown [ Send | ⌵ ] */}
+              <div className="relative inline-flex items-center rounded-xl bg-[#673DE6] text-white shadow-xs" ref={scheduleMenuRef}>
+                <button
+                  type="button"
+                  onClick={handleSendEmail}
+                  disabled={composeSending}
+                  className="px-4 py-2 text-xs font-bold hover:bg-[#5025D1] rounded-l-xl transition disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                  title="Send in real time now"
+                >
+                  <span>{composeSending ? "Sending..." : "Send"}</span>
+                </button>
+                <div className="w-px h-5 bg-white/25" />
+                <button
+                  type="button"
+                  onClick={() => setScheduleMenuOpen(!scheduleMenuOpen)}
+                  className="px-2 py-2 text-xs hover:bg-[#5025D1] rounded-r-xl transition flex items-center justify-center cursor-pointer"
+                  title="Send options (Schedule send)"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+
+                {/* Dropdown for Send Options */}
+                {scheduleMenuOpen && (
+                  <div className="absolute bottom-11 left-0 w-44 bg-white rounded-2xl shadow-xl border border-gray-200 py-1.5 z-50 animate-in fade-in zoom-in-95 text-gray-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScheduleMenuOpen(false);
+                        void handleSendEmail();
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-purple-50 hover:text-[#673DE6] flex items-center gap-2 cursor-pointer"
+                    >
+                      <span>🚀</span> Send Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScheduleMenuOpen(false);
+                        const tom = new Date();
+                        tom.setDate(tom.getDate() + 1);
+                        setScheduleSendDate(tom.toISOString().split("T")[0]);
+                        setScheduleSendTime("10:00");
+                        setScheduleSendModalOpen(true);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-purple-50 hover:text-[#673DE6] flex items-center gap-2 cursor-pointer"
+                    >
+                      <span>⏰</span> Schedule Send
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 2. AI Assistant Icon (🪄) */}
               <button
-                onClick={handleSendEmail}
-                disabled={composeSending}
-                className="rounded-xl bg-gradient-to-r from-[#673DE6] to-[#5025D1] hover:from-[#784ef7] hover:to-[#5f2ee0] px-5 py-2 text-xs font-bold text-white shadow-md shadow-purple-500/25 hover:shadow-lg hover:shadow-purple-500/35 hover:scale-105 active:scale-95 transition-all duration-200 disabled:opacity-50 cursor-pointer"
+                type="button"
+                onClick={() => {
+                  setShowAiPromptBar((prev) => !prev);
+                  setTimeout(() => aiInputRef.current?.focus(), 50);
+                }}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition border cursor-pointer shadow-2xs ${
+                  showAiPromptBar
+                    ? "bg-purple-100 text-[#673DE6] border-purple-300"
+                    : "bg-purple-50 text-[#673DE6] hover:bg-purple-100 border-purple-200/60"
+                }`}
+                title="Toggle AI Draft bar (🪄)"
               >
-                {composeSending ? "Sending Real-Time..." : "Send Email"}
+                <svg className="w-4 h-4 text-[#673DE6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.091zM18.25 12l.406 1.423a2.25 2.25 0 001.545 1.545L21.75 15l-1.549.406a2.25 2.25 0 00-1.545 1.545L18.25 18.25l-.406-1.549a2.25 2.25 0 00-1.545-1.545L14.75 15l1.549-.406a2.25 2.25 0 001.545-1.545L18.25 12z" />
+                </svg>
               </button>
 
-              {templates.length > 0 && (
-                <select
-                  value={selectedTemplateId}
-                  onChange={(e) => handleApplyTemplate(e.target.value)}
-                  className="rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 focus:outline-none hover:bg-gray-50 cursor-pointer"
-                >
-                  <option value="">📋 Template</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+              {/* 3. Formatting Toolbar Toggle Icon (A_) */}
               <button
-                onClick={() => setAiModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-xl border border-purple-200 bg-purple-50/60 px-3 py-1.5 text-xs font-bold text-[#673DE6] hover:bg-purple-100 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer"
+                type="button"
+                onClick={() => setFormatToolbarOpen(!formatToolbarOpen)}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
+                  formatToolbarOpen ? "bg-purple-100 text-[#673DE6] font-bold border border-purple-200" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                }`}
+                title="Formatting options (Bold, Italic, Lists)"
               >
-                <span>✨</span> Draft with AI
+                <span className="font-serif font-bold text-sm underline underline-offset-4 decoration-2">A</span>
+              </button>
+
+              {/* 4. Attach Files (📎) */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-8 h-8 rounded-xl text-gray-600 hover:bg-gray-100 hover:text-gray-900 flex items-center justify-center transition cursor-pointer"
+                title="Attach files (📎)"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4.5 4.5 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </button>
+
+              {/* 5. Insert Link (🔗) */}
+              <button
+                type="button"
+                onClick={handleInsertLink}
+                className="w-8 h-8 rounded-xl text-gray-600 hover:bg-gray-100 hover:text-gray-900 flex items-center justify-center transition cursor-pointer"
+                title="Insert link (🔗)"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+              </button>
+
+              {/* 6. Insert Image (🖼️) */}
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className="w-8 h-8 rounded-xl text-gray-600 hover:bg-gray-100 hover:text-gray-900 flex items-center justify-center transition cursor-pointer"
+                title="Insert image (🖼️)"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </button>
+
+              {/* 7. Divider (|) */}
+              <div className="w-px h-5 bg-gray-300 mx-0.5" />
+
+              {/* 8. Live Preview Mode Toggle (👁) */}
+              <button
+                type="button"
+                onClick={() => setComposePreviewMode(!composePreviewMode)}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
+                  composePreviewMode ? "bg-purple-100 text-[#673DE6] border border-purple-200" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                }`}
+                title={composePreviewMode ? "Switch back to Edit mode" : "Live Preview Brand View (👁)"}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              </button>
+
+              {/* 9. Saved Templates Menu (📄) */}
+              <div className="relative" ref={templateMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setTemplateMenuOpen(!templateMenuOpen)}
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
+                    templateMenuOpen ? "bg-purple-100 text-[#673DE6] border border-purple-200" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  }`}
+                  title="Insert Template (📄)"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </button>
+
+                {/* Templates Popup Menu */}
+                {templateMenuOpen && (
+                  <div className="absolute bottom-11 left-0 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 p-2 z-50 animate-in fade-in zoom-in-95 text-gray-800">
+                    <div className="text-[10px] font-bold text-gray-500 uppercase px-2.5 py-1 tracking-wider">
+                      Select Template to Apply
+                    </div>
+                    <div className="space-y-1 max-h-52 overflow-y-auto">
+                      {templates.map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            handleApplyTemplate(t.id);
+                            setTemplateMenuOpen(false);
+                            setDraftNotice(`✓ Applied template "${t.name}"`);
+                            setTimeout(() => setDraftNotice(""), 3000);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-purple-50 text-xs font-semibold hover:text-[#673DE6] flex items-center justify-between transition cursor-pointer"
+                        >
+                          <span className="truncate">{t.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 10. Insert David Lucas Signature (✍️) */}
+              <button
+                type="button"
+                onClick={handleInsertSignature}
+                className="w-8 h-8 rounded-xl text-gray-600 hover:bg-purple-50 hover:text-[#673DE6] flex items-center justify-center transition cursor-pointer"
+                title="Insert David Lucas 2-Column Signature (✍️)"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                </svg>
               </button>
             </div>
 
-            {/* Mention Recipient in Bottom Bar */}
-            <div className="flex items-center gap-3">
-              {composeTo ? (
-                <span className="text-[11px] text-gray-600 font-medium truncate max-w-[150px] sm:max-w-xs" title={`To: ${composeTo}`}>
-                  To: <strong className="text-gray-900 font-mono font-bold">{composeTo}</strong>
-                </span>
-              ) : (
-                <span className="text-[10px] text-gray-400 italic">No recipient set</span>
-              )}
-
+            {/* Right Controls: Save Draft & Discard Trash Icon */}
+            <div className="flex items-center gap-2">
+              {/* 11. Save Draft Text Button */}
               <button
-                onClick={() => setComposeOpen(false)}
-                className="text-gray-400 hover:text-red-500 p-1 cursor-pointer"
-                title="Close"
+                type="button"
+                onClick={handleSaveDraft}
+                disabled={draftSaving}
+                className="text-xs font-semibold text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 transition cursor-pointer disabled:opacity-50"
+                title="Save draft to Drafts folder"
+              >
+                {draftSaving ? "Saving..." : "Save draft"}
+              </button>
+
+              {/* 12. Discard / Trash Button */}
+              <button
+                type="button"
+                onClick={handleResetCompose}
+                className="w-8 h-8 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition cursor-pointer"
+                title="Discard draft"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Send Modal */}
+      {scheduleSendModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-purple-100 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">⏰</span>
+                <h3 className="text-sm font-bold text-gray-900">Schedule Email Send</h3>
+              </div>
+              <button
+                onClick={() => setScheduleSendModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 text-sm p-1 rounded-lg hover:bg-gray-100 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">To Recipient:</label>
+                <div className="p-2 bg-gray-50 rounded-xl border border-gray-200 font-mono font-semibold text-gray-900">
+                  {composeTo || "(Please enter recipient in composer)"}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">Schedule Date:</label>
+                <input
+                  type="date"
+                  required
+                  value={scheduleSendDate}
+                  onChange={(e) => setScheduleSendDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#673DE6] focus:outline-none font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-gray-700 mb-1">Schedule Time:</label>
+                <input
+                  type="time"
+                  required
+                  value={scheduleSendTime}
+                  onChange={(e) => setScheduleSendTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#673DE6] focus:outline-none font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-4 border-t border-gray-100 mt-5">
+              <button
+                type="button"
+                onClick={() => setScheduleSendModalOpen(false)}
+                className="px-3.5 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteScheduleSend}
+                disabled={composeSending || !composeTo.trim()}
+                className="px-4 py-2 text-xs font-bold text-white bg-[#673DE6] hover:bg-[#5025D1] rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
+              >
+                {composeSending ? "Scheduling..." : "Schedule & Send"}
               </button>
             </div>
           </div>
