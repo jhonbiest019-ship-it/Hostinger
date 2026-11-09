@@ -1,4 +1,3 @@
 import { PageHeader } from "@/components/page-header";
-
-const sections = [["Account", "Profile and workspace identity"], ["General", "Timezone, dates, and default preferences"], ["Email settings", "Defaults for future sending workflows"], ["Security", "Authentication and encrypted credential controls"]];
-export default function SettingsPage() { return <><PageHeader eyebrow="Workspace" title="Settings" description="Configure your workspace foundation. Advanced settings will be introduced in later phases." /><div className="grid gap-4 lg:grid-cols-2">{sections.map(([title, description]) => <section className="card p-6" key={title}><h2 className="font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-500">{description}</p><div className="mt-6 space-y-4"><label className="block text-sm font-medium text-slate-600">{title} name<input className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none focus:border-ink" placeholder="Not configured" disabled /></label><button className="btn-secondary" type="button" disabled>Save changes</button></div></section>)}</div></>; }
+import { SettingsWorkspace } from "@/components/settings-workspace";
+export default function SettingsPage() { return <><PageHeader eyebrow="Workspace" title="Settings" description="Manage your profile, default timezone and password." /><SettingsWorkspace /></>; }

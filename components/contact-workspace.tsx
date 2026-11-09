@@ -4,25 +4,470 @@ import { FormEvent, useEffect, useState } from "react";
 import { Badge, EmptyState } from "@/components/ui";
 import { csvValue, parseCsv } from "@/lib/csv";
 
-type Contact = { id: string; firstName: string | null; lastName: string | null; fullName: string | null; name: string; companyName: string | null; brandName: string | null; email: string; phone: string | null; website: string | null; formUrl: string | null; notes: string | null; status: string; createdAt: string };
-type FormValues = { firstName: string; lastName: string; fullName: string; companyName: string; brandName: string; email: string; phone: string; website: string; formUrl: string; notes: string; status: string };
-const emptyForm: FormValues = { firstName: "", lastName: "", fullName: "", companyName: "", brandName: "", email: "", phone: "", website: "", formUrl: "", notes: "", status: "ACTIVE" };
-const headers = ["Name", "Brand / Company", "Email", "Phone", "Website", "Status", "Created", "Actions"];
+type Contact = {
+  id: string;
+  name: string;
+  brandName: string | null;
+  companyName: string | null;
+  email: string;
+  phone: string | null;
+  website: string | null;
+  notes: string | null; // used as Product Category
+  status: string;
+  createdAt: string;
+};
 
-function contactDate(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value)); }
-function tone(status: string): "neutral" | "green" | "amber" | "blue" { return status === "ACTIVE" ? "green" : status === "REPLIED" ? "blue" : status === "DO_NOT_CONTACT" || status === "INVALID" ? "amber" : "neutral"; }
-function formFrom(contact: Contact): FormValues { return { firstName: contact.firstName ?? "", lastName: contact.lastName ?? "", fullName: contact.fullName ?? contact.name, companyName: contact.companyName ?? "", brandName: contact.brandName ?? "", email: contact.email, phone: contact.phone ?? "", website: contact.website ?? "", formUrl: contact.formUrl ?? "", notes: contact.notes ?? "", status: contact.status }; }
+type FormValues = {
+  brandName: string;
+  email: string;
+  productCategory: string;
+  website: string;
+  status: string;
+};
+
+const emptyForm: FormValues = {
+  brandName: "",
+  email: "",
+  productCategory: "",
+  website: "",
+  status: "ACTIVE",
+};
 
 export function ContactWorkspace() {
-  const [contacts, setContacts] = useState<Contact[]>([]); const [total, setTotal] = useState(0); const [search, setSearch] = useState(""); const [status, setStatus] = useState(""); const [form, setForm] = useState<FormValues>(emptyForm); const [editing, setEditing] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null); const [csvRows, setCsvRows] = useState<FormValues[]>([]); const [csvErrors, setCsvErrors] = useState<string[]>([]); const [csvOpen, setCsvOpen] = useState(false); const [importing, setImporting] = useState(false);
-  async function request(path: string, options?: RequestInit) { const response = await fetch(path, { ...options, credentials: "include", headers: { "content-type": "application/json", ...(options?.headers ?? {}) } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error ?? "Request failed."); return body; }
-  async function load() { try { const params = new URLSearchParams({ pageSize: "100" }); if (search) params.set("search", search); if (status) params.set("status", status); const body = await request(`/api/contacts?${params}`); setContacts(body.contacts); setTotal(body.total); } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to load contacts." }); } }
-  useEffect(() => { const timer = setTimeout(() => void load(), 250); return () => clearTimeout(timer); }, [search, status]);
-  function change(name: keyof FormValues, value: string) { setForm((current) => ({ ...current, [name]: value })); }
-  function reset() { setEditing(null); setForm(emptyForm); }
-  async function save(event: FormEvent) { event.preventDefault(); setBusy(true); setMessage(null); try { await request(editing ? `/api/contacts/${editing}` : "/api/contacts", { method: editing ? "PATCH" : "POST", body: JSON.stringify(form) }); setMessage({ kind: "success", text: editing ? "Contact updated." : "Contact added." }); reset(); await load(); } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to save contact." }); } finally { setBusy(false); } }
-  async function remove(contact: Contact) { if (!window.confirm(`Delete ${contact.name}? Contacts linked to campaign history cannot be deleted.`)) return; try { await request(`/api/contacts/${contact.id}`, { method: "DELETE", body: "{}" }); setMessage({ kind: "success", text: "Contact deleted." }); await load(); } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to delete contact." }); } }
-  function selectFile(file: File | undefined) { if (!file) return; if (!file.name.toLowerCase().endsWith(".csv") || file.size > 5 * 1024 * 1024) { setCsvErrors(["Choose a CSV file smaller than 5 MB."]); return; } void file.text().then((text) => { const raw = parseCsv(text); if (raw.length > 1000) { setCsvErrors(["CSV imports are limited to 1,000 data rows."]); setCsvRows([]); return; } const mapped = raw.map((row) => ({ firstName: csvValue(row, ["first name", "firstname"]), lastName: csvValue(row, ["last name", "lastname"]), fullName: csvValue(row, ["name", "full name", "fullname"]), companyName: csvValue(row, ["company", "company name"]), brandName: csvValue(row, ["brand", "brand name"]), email: csvValue(row, ["email", "email address"]), phone: csvValue(row, ["phone", "phone number"]), website: csvValue(row, ["website", "site"]), formUrl: csvValue(row, ["form link", "form url", "formurl"]), notes: csvValue(row, ["notes", "note"]), status: "ACTIVE" })); const errors = mapped.flatMap((row, index) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) ? [`Row ${index + 2}: invalid or missing email`] : []); setCsvRows(mapped); setCsvErrors(errors); setCsvOpen(true); }); }
-  async function importCsv(strategy: "skip" | "update") { setImporting(true); try { const body = await request("/api/contacts/import", { method: "POST", body: JSON.stringify({ rows: csvRows, strategy }) }); setMessage({ kind: "success", text: `Imported: ${body.imported}, updated: ${body.updated}, duplicates: ${body.duplicates}, invalid: ${body.invalid}.` }); setCsvOpen(false); setCsvRows([]); await load(); } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to import CSV." }); } finally { setImporting(false); } }
-  return <div className="space-y-6"><section className="card p-6"><div className="mb-5 flex items-start justify-between gap-4"><div><h2 className="font-semibold">{editing ? "Edit contact" : "Add contact"}</h2><p className="mt-1 text-sm text-slate-500">Keep brand and contact details ready for future campaigns.</p></div>{editing && <button className="btn-secondary" type="button" onClick={reset}>Cancel edit</button>}</div><form onSubmit={save} noValidate><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{(["firstName", "lastName", "fullName", "companyName", "brandName", "email", "phone", "website", "formUrl"] as const).map((name) => <label key={name} className="text-sm font-medium text-slate-600">{({ firstName: "First Name", lastName: "Last Name", fullName: "Full Name", companyName: "Company Name", brandName: "Brand Name", email: "Email", phone: "Phone", website: "Website", formUrl: "Form URL" })[name]}{name === "email" && <span className="ml-1 text-xs text-red-500">*</span>}<input required={name === "email"} type={name === "email" ? "email" : name === "website" || name === "formUrl" ? "url" : "text"} value={form[name]} onChange={(event) => change(name, event.target.value)} className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none focus:border-ink" /></label>)}<label className="text-sm font-medium text-slate-600">Status<select value={form.status} onChange={(event) => change("status", event.target.value)} className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm"><option>ACTIVE</option><option>CONTACTED</option><option>REPLIED</option><option>DO_NOT_CONTACT</option><option>INVALID</option></select></label><label className="text-sm font-medium text-slate-600 sm:col-span-2 lg:col-span-3">Notes<textarea value={form.notes} onChange={(event) => change("notes", event.target.value)} rows={2} className="mt-2 w-full rounded-lg border border-line px-3 py-2.5 text-sm outline-none focus:border-ink" /></label></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={busy}>{busy ? "Saving..." : editing ? "Update contact" : "Add contact"}</button>{!editing && <button className="btn-secondary" type="button" onClick={reset}>Clear</button>}</div></form></section><section className="card p-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-center"><input value={search} onChange={(event) => setSearch(event.target.value)} className="flex-1 rounded-lg border border-line px-4 py-2.5 text-sm outline-none focus:border-ink" placeholder="Search name, brand, email, or phone" /><select value={status} onChange={(event) => setStatus(event.target.value)} className="rounded-lg border border-line bg-white px-4 py-2.5 text-sm"><option value="">All statuses</option><option>ACTIVE</option><option>CONTACTED</option><option>REPLIED</option><option>DO_NOT_CONTACT</option><option>INVALID</option></select><label className="btn-secondary cursor-pointer">Import CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])} /></label><span className="text-sm text-slate-500">{total} contacts</span></div></section>{message && <div className={`rounded-lg px-4 py-3 text-sm ${message.kind === "success" ? "bg-mint text-emerald-800" : "bg-red-50 text-red-700"}`} role="alert">{message.text}</div>}{csvOpen && <section className="card p-6"><div className="flex items-center justify-between"><div><h2 className="font-semibold">Review CSV import</h2><p className="mt-1 text-sm text-slate-500">Previewing {csvRows.length} records. Invalid rows will not be imported.</p></div><button className="btn-secondary" type="button" onClick={() => setCsvOpen(false)}>Close</button></div>{csvErrors.length > 0 && <div className="mt-4 rounded-lg bg-amber-50 p-4 text-sm text-amber-800"><p className="font-semibold">Validation issues</p>{csvErrors.slice(0, 8).map((error) => <p key={error} className="mt-1">{error}</p>)}</div>}<div className="mt-4 overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="border-b border-line"><tr>{["Name", "Brand", "Email", "Phone", "Website"].map((heading) => <th key={heading} className="px-3 py-3 text-xs uppercase text-slate-400">{heading}</th>)}</tr></thead><tbody>{csvRows.slice(0, 10).map((row, index) => <tr className="border-b border-line" key={`${row.email}-${index}`}><td className="px-3 py-3">{row.fullName || `${row.firstName} ${row.lastName}`}</td><td className="px-3 py-3">{row.brandName || row.companyName}</td><td className="px-3 py-3">{row.email}</td><td className="px-3 py-3">{row.phone}</td><td className="px-3 py-3">{row.website}</td></tr>)}</tbody></table></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={importing || csvRows.length === 0} onClick={() => void importCsv("skip")}>{importing ? "Importing..." : "Import valid records"}</button><button className="btn-secondary" disabled={importing || csvRows.length === 0} onClick={() => void importCsv("update")}>Update duplicates and import</button></div></section>}{contacts.length === 0 ? <EmptyState title="No contacts found" description="Add a contact or import a CSV to start building your brand outreach list." /> : <div className="card overflow-x-auto"><table className="w-full min-w-[950px] text-left text-sm"><thead className="border-b border-line bg-cloud/60"><tr>{headers.map((heading) => <th key={heading} className="whitespace-nowrap px-5 py-4 text-xs font-bold uppercase tracking-wide text-slate-400">{heading}</th>)}</tr></thead><tbody>{contacts.map((contact) => <tr className="border-b border-line last:border-0" key={contact.id}><td className="px-5 py-4 font-medium">{contact.fullName || contact.name}</td><td className="px-5 py-4">{contact.brandName || contact.companyName || "-"}</td><td className="px-5 py-4 text-slate-600">{contact.email}</td><td className="px-5 py-4 text-slate-500">{contact.phone || "-"}</td><td className="max-w-40 truncate px-5 py-4 text-slate-500">{contact.website || "-"}</td><td className="px-5 py-4"><Badge tone={tone(contact.status)}>{contact.status}</Badge></td><td className="whitespace-nowrap px-5 py-4 text-slate-500">{contactDate(contact.createdAt)}</td><td className="px-5 py-4"><div className="flex gap-2"><button className="btn-secondary px-3 py-2" type="button" onClick={() => { setEditing(contact.id); setForm(formFrom(contact)); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button><button className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50" type="button" onClick={() => void remove(contact)}>Delete</button></div></td></tr>)}</tbody></table></div>}</div>;
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [form, setForm] = useState<FormValues>(emptyForm);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [senderEmail, setSenderEmail] = useState<string>("Loading...");
+
+  // CSV Import State
+  const [csvRows, setCsvRows] = useState<any[]>([]);
+  const [csvOpen, setCsvOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  async function request(path: string, options?: RequestInit) {
+    const response = await fetch(path, {
+      ...options,
+      credentials: "include",
+      headers: { "content-type": "application/json", ...(options?.headers ?? {}) },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error ?? "Request failed.");
+    return body;
+  }
+
+  async function load() {
+    try {
+      const params = new URLSearchParams({ pageSize: "100" });
+      if (search) params.set("search", search);
+      if (status) params.set("status", status);
+
+      const [cBody, mBody] = await Promise.all([
+        request(`/api/contacts?${params}`),
+        request("/api/mailboxes"),
+      ]);
+
+      setContacts(cBody.contacts || []);
+      setTotal(cBody.total || 0);
+
+      const activeMailboxes = (mBody.mailboxes || []).filter(
+        (m: any) => m.status === "ACTIVE" && m.smtpStatus === "CONNECTED"
+      );
+      if (activeMailboxes.length > 0) {
+        setSenderEmail(activeMailboxes[0].emailAddress);
+      } else if (mBody.mailboxes?.length > 0) {
+        setSenderEmail(mBody.mailboxes[0].emailAddress);
+      } else {
+        setSenderEmail("No mailbox configured yet (Add in Mailboxes)");
+      }
+    } catch (error) {
+      setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to load contacts." });
+    }
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(() => void load(), 250);
+    return () => clearTimeout(timer);
+  }, [search, status]);
+
+  function change(name: keyof FormValues, value: string) {
+    setForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function reset() {
+    setEditing(null);
+    setForm(emptyForm);
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!form.brandName.trim() || !form.email.trim()) {
+      setMessage({ kind: "error", text: "Brand Name and Brand Email are required." });
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+
+    try {
+      const payload = {
+        name: form.brandName,
+        fullName: form.brandName,
+        brandName: form.brandName,
+        email: form.email,
+        notes: form.productCategory, // product category is stored in notes
+        website: form.website || undefined,
+        status: form.status,
+      };
+
+      await request(editing ? `/api/contacts/${editing}` : "/api/contacts", {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+
+      setMessage({ kind: "success", text: editing ? "Brand contact updated." : "Brand contact added." });
+      reset();
+      await load();
+    } catch (error) {
+      setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to save contact." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(contact: Contact) {
+    if (!window.confirm(`Delete ${contact.brandName || contact.name}?`)) return;
+    try {
+      await request(`/api/contacts/${contact.id}`, { method: "DELETE", body: "{}" });
+      setMessage({ kind: "success", text: "Brand deleted." });
+      await load();
+    } catch (error) {
+      setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to delete contact." });
+    }
+  }
+
+  function handleCsvFile(file: File | undefined) {
+    if (!file) return;
+    void file.text().then((text) => {
+      const raw = parseCsv(text);
+      const mapped = raw.map((row) => ({
+        brandName: csvValue(row, ["brand", "brand name", "company", "name"]),
+        email: csvValue(row, ["email", "brand email", "email address", "mail"]),
+        productCategory: csvValue(row, ["category", "product category", "niche", "product", "industry"]),
+        website: csvValue(row, ["website", "site", "url"]),
+        status: "ACTIVE",
+      }));
+      setCsvRows(mapped.filter((r) => r.email));
+      setCsvOpen(true);
+    });
+  }
+
+  async function importCsv() {
+    setImporting(true);
+    try {
+      const formatted = csvRows.map((r) => ({
+        fullName: r.brandName,
+        brandName: r.brandName,
+        email: r.email,
+        notes: r.productCategory,
+        website: r.website || undefined,
+        status: "ACTIVE",
+      }));
+
+      await request("/api/contacts/import", {
+        method: "POST",
+        body: JSON.stringify({ rows: formatted, strategy: "skip" }),
+      });
+
+      setMessage({ kind: "success", text: `Imported ${csvRows.length} brand contacts successfully.` });
+      setCsvOpen(false);
+      setCsvRows([]);
+      await load();
+    } catch (error) {
+      setMessage({ kind: "error", text: error instanceof Error ? error.message : "Unable to import contacts." });
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1400px] mx-auto">
+      {/* Header with Sender Detail Badge */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-200 pb-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Brand Contacts</h1>
+          <p className="text-xs sm:text-sm text-gray-500 mt-1">
+            Manage your targeted brand outreach contacts, brand emails, and product categories.
+          </p>
+        </div>
+
+        {/* Sender details badge */}
+        <div className="flex items-center gap-2 rounded-2xl bg-purple-50 border border-purple-200 px-4 py-2 text-xs">
+          <span className="text-purple-600 font-bold">📤 Connected Sender:</span>
+          <span className="font-semibold text-gray-900">{senderEmail}</span>
+        </div>
+      </div>
+
+      {message && (
+        <div
+          className={`rounded-2xl p-4 text-xs sm:text-sm font-medium ${
+            message.kind === "success"
+              ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+              : "bg-red-50 border border-red-200 text-red-800"
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
+
+      {/* Simplified Add/Edit Contact Form */}
+      <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
+        <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-5">
+          <h2 className="text-base font-bold text-gray-900">
+            {editing ? "Edit Brand Details" : "Add Brand Contact"}
+          </h2>
+          {editing && (
+            <button
+              type="button"
+              onClick={reset}
+              className="text-xs font-semibold text-gray-500 hover:text-black underline"
+            >
+              Cancel Edit
+            </button>
+          )}
+        </div>
+
+        <form onSubmit={save} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Brand Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              required
+              type="text"
+              placeholder="e.g. Lang's Chocolates"
+              value={form.brandName}
+              onChange={(e) => change("brandName", e.target.value)}
+              className="w-full rounded-xl border border-gray-200 p-2.5 text-xs sm:text-sm focus:border-[#673DE6] focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Brand Email <span className="text-red-500">*</span>
+            </label>
+            <input
+              required
+              type="email"
+              placeholder="e.g. sales@langschocolates.com"
+              value={form.email}
+              onChange={(e) => change("email", e.target.value)}
+              className="w-full rounded-xl border border-gray-200 p-2.5 text-xs sm:text-sm focus:border-[#673DE6] focus:outline-none font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Product Category (Category)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Gourmet Chocolates & Candies"
+              value={form.productCategory}
+              onChange={(e) => change("productCategory", e.target.value)}
+              className="w-full rounded-xl border border-gray-200 p-2.5 text-xs sm:text-sm focus:border-[#673DE6] focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Website (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. https://langschocolates.com"
+              value={form.website}
+              onChange={(e) => change("website", e.target.value)}
+              className="w-full rounded-xl border border-gray-200 p-2.5 text-xs sm:text-sm focus:border-[#673DE6] focus:outline-none"
+            />
+          </div>
+
+          <div className="sm:col-span-2 lg:col-span-4 flex items-center justify-end gap-3 pt-2">
+            {!editing && (
+              <button
+                type="button"
+                onClick={reset}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded-xl bg-[#673DE6] hover:bg-[#5025D1] px-6 py-2.5 text-xs font-semibold text-white shadow-sm transition disabled:opacity-50"
+            >
+              {busy ? "Saving..." : editing ? "Update Brand" : "Save Brand Contact"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Filter & Import Bar */}
+      <section className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="relative w-full sm:w-96">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search brand name, email, or category..."
+            className="w-full rounded-full border border-gray-200 py-2 pl-4 pr-10 text-xs sm:text-sm text-gray-800 placeholder-gray-400 focus:border-[#673DE6] focus:outline-none"
+          />
+        </div>
+
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+          <label className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer shadow-2xs">
+            📥 Import CSV / Sheet
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => handleCsvFile(e.target.files?.[0])}
+            />
+          </label>
+          <span className="text-xs font-semibold text-gray-500">{total} Brands Total</span>
+        </div>
+      </section>
+
+      {/* CSV Review Modal */}
+      {csvOpen && (
+        <div className="rounded-2xl border border-purple-200 bg-purple-50/50 p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-gray-900">Review {csvRows.length} Imported Brands</h3>
+            <button onClick={() => setCsvOpen(false)} className="text-xs font-bold text-gray-500 hover:text-black">
+              ✕
+            </button>
+          </div>
+
+          <div className="max-h-56 overflow-auto rounded-xl border border-gray-200 bg-white">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-50 text-gray-600 font-bold border-b border-gray-200">
+                <tr>
+                  <th className="p-2.5">Brand Name</th>
+                  <th className="p-2.5">Brand Email</th>
+                  <th className="p-2.5">Product Category</th>
+                  <th className="p-2.5">Website</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {csvRows.slice(0, 20).map((r, i) => (
+                  <tr key={i}>
+                    <td className="p-2.5 font-semibold">{r.brandName || "—"}</td>
+                    <td className="p-2.5 font-mono">{r.email}</td>
+                    <td className="p-2.5 text-purple-700">{r.productCategory || "—"}</td>
+                    <td className="p-2.5 text-gray-400">{r.website || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setCsvOpen(false)}
+              className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-700 bg-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={importCsv}
+              disabled={importing}
+              className="rounded-xl bg-[#673DE6] px-5 py-2 text-xs font-semibold text-white hover:bg-[#5025D1]"
+            >
+              {importing ? "Importing..." : `Import ${csvRows.length} Brands`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Contacts List Table */}
+      {contacts.length === 0 ? (
+        <EmptyState
+          title="No brand contacts yet"
+          description="Add a brand contact above or import an Excel/CSV file to build your outreach list."
+        />
+      ) : (
+        <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-xs">
+          <table className="w-full min-w-[900px] text-left text-xs sm:text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200 text-gray-600 font-bold">
+              <tr>
+                <th className="p-4">Brand Name</th>
+                <th className="p-4">Brand Email</th>
+                <th className="p-4">Product Category</th>
+                <th className="p-4">Website</th>
+                <th className="p-4">Sender Mailbox</th>
+                <th className="p-4">Status</th>
+                <th className="p-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {contacts.map((contact) => (
+                <tr key={contact.id} className="hover:bg-gray-50/60">
+                  <td className="p-4 font-bold text-gray-900">{contact.brandName || contact.name}</td>
+                  <td className="p-4 text-gray-700 font-mono text-xs">{contact.email}</td>
+                  <td className="p-4 text-purple-700 font-medium">{contact.notes || "—"}</td>
+                  <td className="p-4 text-gray-400 text-xs truncate max-w-48">
+                    {contact.website ? (
+                      <a href={contact.website} target="_blank" rel="noreferrer" className="hover:underline text-blue-600">
+                        {contact.website.replace(/^https?:\/\//, "")}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="p-4 text-xs font-medium text-gray-500">{senderEmail}</td>
+                  <td className="p-4">
+                    <Badge tone={contact.status === "ACTIVE" ? "green" : contact.status === "REPLIED" ? "blue" : "neutral"}>
+                      {contact.status}
+                    </Badge>
+                  </td>
+                  <td className="p-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditing(contact.id);
+                          setForm({
+                            brandName: contact.brandName || contact.name,
+                            email: contact.email,
+                            productCategory: contact.notes || "",
+                            website: contact.website || "",
+                            status: contact.status,
+                          });
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => remove(contact)}
+                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }

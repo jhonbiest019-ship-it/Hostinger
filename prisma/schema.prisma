@@ -98,21 +98,60 @@ enum LogStatus {
   REPLIED
 }
 
+enum FormJobStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  AWAITING_MANUAL_ACTION
+  FAILED
+  NOT_AVAILABLE
+  CANCELLED
+}
+
+enum FormScheduleMode {
+  SAME_TIME
+  DIFFERENT_TIME
+}
+
 model User {
-  id             String           @id @default(cuid())
-  email          String           @unique
-  name           String?
-  passwordHash   String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  mailboxes      Mailbox[]
-  contacts       Contact[]
-  templates      Template[]
-  campaigns      Campaign[]
-  messages       EmailMessage[]
-  followUpRules  FollowUpRule[]
-  scheduledJobs  ScheduledJob[]
-  emailLogs      EmailLog[]
+  id                  String           @id @default(cuid())
+  email               String           @unique
+  name                String?
+  passwordHash        String?
+  timezone            String           @default("Asia/Karachi")
+  emailVerified       Boolean          @default(true)
+  verificationCode    String?
+  verificationExpires DateTime?
+  resetCode           String?
+  resetExpires        DateTime?
+  tokenVersion        Int              @default(1)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  mailboxes           Mailbox[]
+  contacts            Contact[]
+  templates           Template[]
+  campaigns           Campaign[]
+  messages            EmailMessage[]
+  followUpRules       FollowUpRule[]
+  scheduledJobs       ScheduledJob[]
+  emailLogs           EmailLog[]
+  formTemplates       FormTemplate[]
+  websiteFormJobs     WebsiteFormJob[]
+  auditLogs           AuditLog[]
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  ipAddress String?
+  userAgent String?
+  details   String?  @db.Text
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
 }
 
 model Mailbox {
@@ -166,6 +205,7 @@ model Contact {
   recipients  CampaignRecipient[]
   messages    EmailMessage[]
   emailLogs   EmailLog[]
+  websiteFormJobs WebsiteFormJob[]
   @@unique([userId, email])
   @@index([userId, status])
   @@index([userId, createdAt])
@@ -178,6 +218,7 @@ model Template {
   subject     String
   body        String       @db.Text
   status      RecordStatus @default(ACTIVE)
+  isDefault   Boolean      @default(false)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -185,6 +226,7 @@ model Template {
   messages    EmailMessage[]
   followUpRules FollowUpRule[]
   @@index([userId, status])
+  @@index([userId, isDefault])
 }
 
 model Campaign {
@@ -194,19 +236,29 @@ model Campaign {
   templateId  String?
   name        String
   description String?          @db.Text
+  sheetUrl        String?      @db.Text
+  sheetTab        String?
+  sheetWebhookUrl String?      @db.Text
   followUpsEnabled Boolean     @default(false)
   stopFollowUpsOnReply Boolean @default(true)
   status      CampaignStatus   @default(DRAFT)
+  formAutomationEnabled Boolean        @default(false)
+  formTemplateId        String?
+  formScheduleMode      FormScheduleMode @default(SAME_TIME)
+  formScheduledAt       DateTime?
+  formConcurrency       Int            @default(2)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   mailbox     Mailbox?         @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
   template    Template?        @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  formTemplate FormTemplate?   @relation(fields: [formTemplateId], references: [id], onDelete: SetNull)
   recipients  CampaignRecipient[]
   messages    EmailMessage[]
   followUpRules FollowUpRule[]
   scheduledJobs ScheduledJob[]
   emailLogs   EmailLog[]
+  websiteFormJobs WebsiteFormJob[]
   @@index([userId, status])
 }
 
@@ -222,11 +274,23 @@ model CampaignRecipient {
   snapshotName  String?
   snapshotBrand String?
   snapshotEmail String?
+  productCategory String?
+  sheetRowIndex   Int?
+  sentAt          DateTime?
+  errorMessage    String?      @db.Text
+  sheetSyncStatus String?      @default("PENDING")
+  sheetSyncedAt   DateTime?
+  sheetSyncError  String?      @db.Text
+  formStatus      FormJobStatus?
+  formUrl         String?      @db.Text
+  formExcluded    Boolean      @default(false)
+  formMissingInfo String?      @db.Text
   createdAt   DateTime    @default(now())
   campaign    Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages    EmailMessage[]
   scheduledJobs ScheduledJob[]
+  websiteFormJobs WebsiteFormJob[]
   @@unique([campaignId, contactId])
   @@index([campaignId, status])
 }
@@ -353,4 +417,52 @@ model EmailLog {
   mailbox     Mailbox?   @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
   contact     Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
   @@index([userId, status, createdAt])
+}
+
+model FormTemplate {
+  id          String         @id @default(cuid())
+  userId      String
+  name        String
+  description String?        @db.Text
+  fieldsJson  String         @db.Text
+  status      RecordStatus   @default(ACTIVE)
+  isDefault   Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns   Campaign[]
+  formJobs    WebsiteFormJob[]
+  @@index([userId, status])
+  @@index([userId, isDefault])
+}
+
+model WebsiteFormJob {
+  id                  String         @id @default(cuid())
+  userId              String
+  campaignId          String
+  campaignRecipientId String
+  contactId           String
+  formTemplateId      String?
+  targetUrl           String         @db.Text
+  resolvedValuesJson  String         @db.Text
+  status              FormJobStatus  @default(PENDING)
+  runAt               DateTime
+  timezone            String         @default("UTC")
+  attempts            Int            @default(0)
+  lastError           String?        @db.Text
+  manualActionReason  String?        @db.Text
+  browserTabId        String?
+  submittedAt         DateTime?
+  lastAttemptAt       DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign            Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignRecipient   CampaignRecipient @relation(fields: [campaignRecipientId], references: [id], onDelete: Cascade)
+  contact             Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  formTemplate        FormTemplate?  @relation(fields: [formTemplateId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status, runAt])
+  @@index([campaignId, status])
+  @@index([campaignRecipientId])
 }

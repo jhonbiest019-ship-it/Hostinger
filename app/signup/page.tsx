@@ -1,3 +1,12 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { getAuthenticatedUserId } from "@/lib/auth";
 import { AuthForm } from "@/components/auth-form";
 
-export default function SignupPage() { return <AuthForm mode="signup" />; }
+export default async function SignupPage() {
+  const cookieStore = await cookies();
+  const sessionToken = cookieStore.get("outreach_session")?.value;
+  const userId = await getAuthenticatedUserId(sessionToken);
+  if (userId) redirect("/dashboard");
+  return <AuthForm mode="signup" />;
+}

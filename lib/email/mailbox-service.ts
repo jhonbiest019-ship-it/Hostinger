@@ -9,6 +9,7 @@ export function passwordFromMailbox(encryptedCredentials: string) { return decry
 
 export async function testMailboxConnections(input: MailboxInput) {
   if (!input.password) throw new Error("Mailbox password is required for testing.");
+  if (process.env.EMAIL_TEST_MODE === "true") return { smtp: false, imap: false, testMode: true as const };
   const smtp = { host: input.smtpHost, port: input.smtpPort, security: input.smtpSecurity, username: input.username, password: input.password };
   const imap = { host: input.imapHost, port: input.imapPort, security: input.imapSecurity, username: input.username, password: input.password };
   const [smtpResult, imapResult] = await Promise.allSettled([verifySmtp(smtp), verifyImap(imap)]);

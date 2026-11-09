@@ -5,4 +5,96 @@ import { connectionRateLimit } from "@/lib/rate-limit";
 import { sendFromMailbox } from "@/lib/email/send-service";
 import { testSendSchema } from "@/lib/email/message-validation";
 
-export async function POST(request: NextRequest) { try { const userId = await requireUser(request); const parsed = testSendSchema.safeParse(await request.json()); if (!parsed.success) return NextResponse.json({ error: "Enter a valid recipient, subject, and body." }, { status: 400 }); if (!connectionRateLimit(`test-send:${userId}:${parsed.data.mailboxId}`)) return NextResponse.json({ error: "Too many test email attempts. Please wait a minute." }, { status: 429 }); const mailbox = await prisma.mailbox.findFirst({ where: { id: parsed.data.mailboxId, userId } }); if (!mailbox) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 }); if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") return NextResponse.json({ error: "Please verify this mailbox connection before sending." }, { status: 409 }); const message = await prisma.emailMessage.create({ data: { userId, mailboxId: mailbox.id, toAddress: parsed.data.recipient, fromAddress: mailbox.emailAddress, subject: parsed.data.subject, body: parsed.data.body, status: "SENDING" }, select: { id: true } }); const log = await prisma.emailLog.create({ data: { userId, messageId: message.id, mailboxId: mailbox.id, sender: mailbox.emailAddress, recipient: parsed.data.recipient, subject: parsed.data.subject, status: "SENDING" }, select: { id: true } }); try { const result = await sendFromMailbox(mailbox, { to: parsed.data.recipient, subject: parsed.data.subject, body: parsed.data.body }); const providerMessageId = result.messageId || null; await prisma.$transaction([prisma.emailMessage.update({ where: { id: message.id }, data: { status: "SENT", sentAt: new Date(), providerMessageId } }), prisma.emailLog.update({ where: { id: log.id }, data: { status: "SENT", providerMessageId, message: "Test email sent successfully." } })]); return NextResponse.json({ success: true, messageId: providerMessageId }); } catch (error) { const safe = safeErrorMessage(error); await prisma.$transaction([prisma.emailMessage.update({ where: { id: message.id }, data: { status: "FAILED", errorMessage: safe } }), prisma.emailLog.update({ where: { id: log.id }, data: { status: "FAILED", message: safe } })]); return NextResponse.json({ error: safe }, { status: 502 }); } } catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 }); } }
+export async function POST(request: NextRequest) {
+  try {
+    const userId = await requireUser(request);
+    const parsed = testSendSchema.safeParse(await request.json());
+    if (!parsed.success) return NextResponse.json({ error: "Enter a valid recipient, subject, and body." }, { status: 400 });
+
+    if (!connectionRateLimit(`test-send:${userId}:${parsed.data.mailboxId}`)) {
+      return NextResponse.json({ error: "Too many test email attempts. Please wait a minute." }, { status: 429 });
+    }
+
+    let mailbox = parsed.data.mailboxId
+      ? await prisma.mailbox.findFirst({ where: { id: parsed.data.mailboxId, userId } })
+      : null;
+
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+      }) || await prisma.mailbox.findFirst({ where: { userId } });
+    }
+
+    if (!mailbox) {
+      return NextResponse.json({ error: "No connected sender mailbox found. Please connect your Hostinger mailbox in the Mailboxes tab first." }, { status: 404 });
+    }
+
+    if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") {
+      return NextResponse.json({ error: "Please verify this mailbox connection in Mailboxes tab before sending." }, { status: 409 });
+    }
+
+    const message = await prisma.emailMessage.create({
+      data: {
+        userId,
+        mailboxId: mailbox.id,
+        toAddress: parsed.data.recipient,
+        fromAddress: mailbox.emailAddress,
+        subject: parsed.data.subject,
+        body: parsed.data.body,
+        status: "SENDING",
+      },
+      select: { id: true },
+    });
+
+    const log = await prisma.emailLog.create({
+      data: {
+        userId,
+        messageId: message.id,
+        mailboxId: mailbox.id,
+        sender: mailbox.emailAddress,
+        recipient: parsed.data.recipient,
+        subject: parsed.data.subject,
+        status: "SENDING",
+      },
+      select: { id: true },
+    });
+
+    try {
+      const result = await sendFromMailbox(mailbox, {
+        to: parsed.data.recipient,
+        subject: parsed.data.subject,
+        body: parsed.data.body,
+      });
+      const providerMessageId = result.messageId || null;
+
+      await prisma.$transaction([
+        prisma.emailMessage.update({
+          where: { id: message.id },
+          data: { status: "SENT", sentAt: new Date(), providerMessageId },
+        }),
+        prisma.emailLog.update({
+          where: { id: log.id },
+          data: { status: "SENT", providerMessageId, message: "Test email sent successfully." },
+        }),
+      ]);
+
+      return NextResponse.json({ success: true, messageId: providerMessageId });
+    } catch (error) {
+      const safe = safeErrorMessage(error);
+      await prisma.$transaction([
+        prisma.emailMessage.update({
+          where: { id: message.id },
+          data: { status: "FAILED", errorMessage: safe },
+        }),
+        prisma.emailLog.update({
+          where: { id: log.id },
+          data: { status: "FAILED", message: safe },
+        }),
+      ]);
+      return NextResponse.json({ error: safe }, { status: 502 });
+    }
+  } catch (error) {
+    if (error instanceof Response) return error;
+    return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 });
+  }
+}

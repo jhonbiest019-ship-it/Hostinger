@@ -1,6 +1,6 @@
-# Outreach Studio
+# Hostinger by Farani
 
-Phase 7 foundation for a professional outreach and follow-up SaaS. This project includes secure account sessions, contact/brand management, CSV import, mailbox SMTP/IMAP verification, templates, manual email sending, delivery logs, controlled campaigns, a server-side queue worker, follow-up sequences, and conservative IMAP reply detection.
+Personal outreach and follow-up workspace. See [Local use](LOCAL_USE.md) for the one-command Windows launcher and daily workflow. This project includes secure account sessions, contact/brand management, CSV import, mailbox SMTP/IMAP verification, templates, manual email sending, delivery logs, controlled campaigns, a server-side queue worker, follow-up sequences, and conservative IMAP reply detection.
 
 ## Setup
 

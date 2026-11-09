@@ -1,5 +1,5 @@
 {
-  "name": "outreach-studio",
+  "name": "hostinger-by-farani",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -7,11 +7,13 @@
     "build": "next build",
     "start": "next start",
     "worker": "tsx scripts/worker.ts",
-    "worker:once": "tsx scripts/worker.ts",
+    "worker:once": "tsx scripts/worker.ts --once",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "test:safe": "tsx scripts/run-safe-tests.ts",
+    "local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",

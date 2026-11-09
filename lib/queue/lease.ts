@@ -19,5 +19,8 @@ export async function releaseWorkerLease(name: string, ownerToken: string) {
 export async function withWorkerLease<T>(name: string, durationMs: number, work: (ownerToken: string) => Promise<T>) {
   const ownerToken = await acquireWorkerLease(name, durationMs);
   if (!ownerToken) return { acquired: false as const };
-  try { return { acquired: true as const, value: await work(ownerToken) }; } finally { await releaseWorkerLease(name, ownerToken); }
+  const heartbeat = setInterval(() => {
+    void prisma.workerLease.updateMany({ where: { name, ownerToken }, data: { expiresAt: new Date(Date.now() + durationMs) } }).catch(() => undefined);
+  }, Math.max(1000, Math.floor(durationMs / 3)));
+  try { return { acquired: true as const, value: await work(ownerToken) }; } finally { clearInterval(heartbeat); await releaseWorkerLease(name, ownerToken); }
 }

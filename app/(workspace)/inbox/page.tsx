@@ -1,4 +1,10 @@
-import { PageHeader } from "@/components/page-header";
-import { InboxWorkspace } from "@/components/inbox-workspace";
+import { Suspense } from "react";
+import { HostingerMailDashboard } from "@/components/hostinger-mail-dashboard";
 
-export default function InboxPage() { return <><PageHeader eyebrow="Inbound replies" title="Inbox" description="Review inbound messages and campaign replies synchronized from verified mailboxes." /><InboxWorkspace /></>; }
+export default function InboxPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-gray-400">Loading inbox...</div>}>
+      <HostingerMailDashboard />
+    </Suspense>
+  );
+}

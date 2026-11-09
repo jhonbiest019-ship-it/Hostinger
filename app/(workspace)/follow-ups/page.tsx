@@ -1,4 +1,15 @@
 import { PageHeader } from "@/components/page-header";
-import { FollowUpBuilder } from "@/components/follow-up-builder";
+import { FollowUpWorkspace } from "@/components/follow-up-workspace";
 
-export default function FollowUpsPage() { return <><PageHeader eyebrow="Sequence automation" title="Follow-ups" description="Configure step-based follow-ups. Actual sending is handled by the server queue and stops when a genuine reply is detected." /><FollowUpBuilder /></>; }
+export default function FollowUpsPage() {
+  return (
+    <>
+      <PageHeader
+        eyebrow="Sequence automation"
+        title="Follow-ups Tracking & Automation"
+        description="Monitor every brand follow-up sequence in real time. Configured templates are strictly delivered on schedule, and follow-ups immediately stop whenever a brand responds."
+      />
+      <FollowUpWorkspace />
+    </>
+  );
+}

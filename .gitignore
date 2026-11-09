@@ -12,3 +12,6 @@ backups/
 *.dump
 *.pem
 *.tsbuildinfo
+
+.local-tools/
+.local-run/
