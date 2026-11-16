@@ -94,6 +94,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
               } else {
                 newLastError = [!testResult.smtp && `SMTP: ${smtpErr || "Failed"}`, !testResult.imap && `IMAP: ${imapErr || "Failed"}`].filter(Boolean).join(" | ");
               }
+              if (newLastError && newLastError.length > 490) {
+                newLastError = newLastError.slice(0, 487) + "...";
+              }
             }
           }
         } catch {}
@@ -136,7 +139,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       });
     }
     return response;
-  } catch (error) { if (error instanceof Response) return error; if (error instanceof Error && error.message.includes("Unique constraint")) return NextResponse.json({ error: "A mailbox with this email address already exists." }, { status: 409 }); return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 }); }
+  } catch (error) {
+    if (error instanceof Response) return error;
+    console.error("PATCH /api/mailboxes/[id] error:", error);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("Unique constraint") || msg.includes("P2002") || msg.includes("Duplicate entry")) {
+      return NextResponse.json({ error: "A mailbox with this email address already exists." }, { status: 409 });
+    }
+    return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 });
+  }
 }
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {

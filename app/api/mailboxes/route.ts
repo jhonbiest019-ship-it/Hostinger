@@ -101,6 +101,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ mailboxes: allMailboxes.map((m) => publicMailbox(m, userId)) });
   } catch (error) {
     if (error instanceof Response) return error;
+    console.error("GET /api/mailboxes error:", error);
     return NextResponse.json({ error: "Unable to load mailboxes." }, { status: 500 });
   }
 }
@@ -166,6 +167,9 @@ export async function POST(request: NextRequest) {
           } else {
             initialLastError = [!testResult.smtp && `SMTP: ${smtpErr || "Failed"}`, !testResult.imap && `IMAP: ${imapErr || "Failed"}`].filter(Boolean).join(" | ");
           }
+          if (initialLastError && initialLastError.length > 490) {
+            initialLastError = initialLastError.slice(0, 487) + "...";
+          }
         }
       }
     } catch {}
@@ -229,7 +233,9 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     if (error instanceof Response) return error;
-    if (error instanceof Error && error.message.includes("Unique constraint")) {
+    console.error("POST /api/mailboxes error:", error);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("Unique constraint") || msg.includes("P2002") || msg.includes("Duplicate entry")) {
       return NextResponse.json({ error: "A mailbox with this email address already exists." }, { status: 409 });
     }
     return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 });

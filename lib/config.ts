@@ -14,7 +14,12 @@ export function validateServerConfig() {
   if (!process.env.WORKER_TOKEN?.trim()) {
     process.env.WORKER_TOKEN = "shotinger-worker-token-fallback";
   }
-  if (!process.env.DATABASE_URL?.trim()) {
+  // DO NOT inject a dummy localhost DATABASE_URL into process.env on Vercel/cloud environments!
+  // Doing so causes Prisma to attempt connecting to a non-existent MySQL server at 127.0.0.1:3307
+  // in AWS Lambda/Vercel serverless containers, which fails with 500 errors.
+  // When DATABASE_URL is not set, lib/prisma seamlessly activates the resilient fallback-db storage.
+  const isCloud = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL_ENV);
+  if (!isCloud && process.env.NODE_ENV !== "production" && !process.env.DATABASE_URL?.trim()) {
     process.env.DATABASE_URL = "mysql://shotinger_test_user:local-test-db-password@127.0.0.1:3307/shotinger_test";
   }
 

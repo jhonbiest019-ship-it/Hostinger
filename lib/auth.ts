@@ -163,8 +163,10 @@ export async function requireUser(request: NextRequest) {
 export function safeErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : "connection failed";
   if (message.includes("auth") || message.includes("password") || message.includes("credential")) return "Authentication failed. Check the mailbox username and password.";
-  if (message.includes("timeout") || message.includes("timed out")) return "The mailbox server timed out. Check the host, port, and network.";
+  if (message.includes("timeout") || message.includes("timed out") || message.includes("etimedout")) return "The mailbox server timed out. Check the host, port, and network.";
   if (message.includes("tls") || message.includes("ssl")) return "Secure connection failed. Check the selected security mode and port.";
   if (message.includes("encryption")) return "Mailbox security configuration is unavailable.";
+  if (message.includes("econnrefused")) return "Connection refused by mail server. Check host and port.";
+  if (message.includes("enotfound")) return "Mail server host not found. Check host address.";
   return "The mailbox connection could not be completed. Check the server settings and try again.";
 }

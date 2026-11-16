@@ -22,7 +22,22 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient; rawPri
 
 function getRawPrisma(): PrismaClient | null {
   if (globalForPrisma.rawPrisma) return globalForPrisma.rawPrisma;
-  if (!process.env.DATABASE_URL) return null;
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (!dbUrl) return null;
+
+  // If in cloud serverless (Vercel, AWS Lambda) and the URL points to localhost or 127.0.0.1,
+  // skip Prisma initialization — local server is unreachable in cloud containers.
+  const isCloudServerless = Boolean(
+    process.env.VERCEL ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.LAMBDA_TASK_ROOT ||
+    process.env.VERCEL_ENV
+  );
+  if (isCloudServerless && (dbUrl.includes("127.0.0.1") || dbUrl.includes("localhost"))) {
+    console.warn("[PRISMA] Cloud serverless environment detected with localhost DATABASE_URL. Switching to resilient fallback storage.");
+    return null;
+  }
+
   try {
     const client = new PrismaClient();
     if (process.env.NODE_ENV !== "production") globalForPrisma.rawPrisma = client;
