@@ -12,8 +12,27 @@ export async function GET(request: NextRequest) {
     if (status && !Object.values(JobStatus).includes(status as JobStatus)) {
       return NextResponse.json({ error: "Invalid status filter." }, { status: 400 });
     }
+    const campaignId = request.nextUrl.searchParams.get("campaignId") || undefined;
+    const pageSize = Math.max(1, Math.min(1000, Math.floor(Number(request.nextUrl.searchParams.get("pageSize"))) || 300));
     const page = Math.max(1, Math.min(100000, Math.floor(Number(request.nextUrl.searchParams.get("page"))) || 1));
-    const where = { userId, ...(status ? { status: status as JobStatus } : {}) };
+    const where = {
+      userId,
+      ...(status ? { status: status as JobStatus } : {}),
+      ...(campaignId ? { campaignId } : {}),
+    };
+
+    const sortOrder =
+      status === "PENDING" || status === "PROCESSING"
+        ? [{ runAt: "asc" as const }, { id: "asc" as const }]
+        : status === "COMPLETED"
+        ? [{ processedAt: "desc" as const }, { runAt: "desc" as const }, { id: "desc" as const }]
+        : status === "CANCELLED" || status === "FAILED"
+        ? [{ runAt: "desc" as const }, { id: "desc" as const }]
+        : [
+            { status: "asc" as const },
+            { runAt: "asc" as const },
+            { id: "asc" as const },
+          ];
 
     const [rawJobs, total, worker, defaultTemplate, campaigns] = await Promise.all([
       prisma.scheduledJob.findMany({
@@ -87,9 +106,9 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        orderBy: [{ runAt: status === "PENDING" ? "asc" : "desc" }, { id: "asc" }],
-        skip: (page - 1) * 50,
-        take: 50,
+        orderBy: sortOrder,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       }),
       prisma.scheduledJob.count({ where }),
       prisma.workerLease.findUnique({ where: { name: "queue" }, select: { updatedAt: true } }),

@@ -7,6 +7,7 @@ import { MailboxStatus, ConnectionStatus } from "@prisma/client";
 
 function publicMailbox(mailbox: {
   id: string;
+  userId?: string;
   displayName: string | null;
   emailAddress: string;
   username: string | null;
@@ -23,18 +24,26 @@ function publicMailbox(mailbox: {
   lastSuccessfulAt: Date | null;
   lastError: string | null;
   createdAt: Date;
-}) {
-  return { ...mailbox, lastError: mailbox.lastError || null, hasPassword: true };
+}, currentUserId?: string) {
+  return {
+    ...mailbox,
+    lastError: mailbox.lastError || null,
+    hasPassword: true,
+    isOwner: mailbox.userId ? mailbox.userId === currentUserId : true,
+  };
 }
 
 export async function GET(request: NextRequest) {
   try {
     const userId = await requireUser(request);
-    const mailboxes = await prisma.mailbox.findMany({
+
+    // 1. User's own mailboxes
+    const ownMailboxes = await prisma.mailbox.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
+        userId: true,
         displayName: true,
         emailAddress: true,
         username: true,
@@ -54,7 +63,42 @@ export async function GET(request: NextRequest) {
         encryptedCredentials: false,
       },
     });
-    return NextResponse.json({ mailboxes: mailboxes.map(publicMailbox) });
+
+    // 2. Also include all active & connected Hostinger mailboxes in this ERP system
+    // so any account logged into this ERP has real-time access to verified active senders!
+    const ownIds = ownMailboxes.map((m) => m.id);
+    const sharedMailboxes = await prisma.mailbox.findMany({
+      where: {
+        status: "ACTIVE",
+        smtpStatus: "CONNECTED",
+        ...(ownIds.length > 0 ? { id: { notIn: ownIds } } : {}),
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        userId: true,
+        displayName: true,
+        emailAddress: true,
+        username: true,
+        smtpHost: true,
+        smtpPort: true,
+        smtpSecurity: true,
+        imapHost: true,
+        imapPort: true,
+        imapSecurity: true,
+        status: true,
+        smtpStatus: true,
+        imapStatus: true,
+        lastCheckedAt: true,
+        lastSuccessfulAt: true,
+        lastError: true,
+        createdAt: true,
+        encryptedCredentials: false,
+      },
+    });
+
+    const allMailboxes = [...ownMailboxes, ...sharedMailboxes];
+    return NextResponse.json({ mailboxes: allMailboxes.map((m) => publicMailbox(m, userId)) });
   } catch (error) {
     if (error instanceof Response) return error;
     return NextResponse.json({ error: "Unable to load mailboxes." }, { status: 500 });

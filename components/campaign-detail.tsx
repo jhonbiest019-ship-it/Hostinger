@@ -173,12 +173,12 @@ export function CampaignDetail({ id }: { id: string }) {
     setReviewConfirming(true);
     try {
       if (reviewModalData.sendMode === "sendNow") {
-        await action(`/api/campaigns/${id}/schedule`, "POST", { mode: "sendNow" }, "Campaign dispatch started!");
+        await action(`/api/campaigns/${id}/schedule`, "POST", { mode: "sendNow", delaySeconds: editDelaySeconds || 60 }, "Campaign dispatch started!");
       } else {
         await action(
           `/api/campaigns/${id}/schedule`,
           "POST",
-          { mode: "schedule", date: scheduleDate, time: scheduleTime, timezone },
+          { mode: "schedule", date: scheduleDate, time: scheduleTime, timezone, delaySeconds: editDelaySeconds || 60 },
           "Campaign scheduled successfully."
         );
       }

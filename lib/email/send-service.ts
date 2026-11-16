@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { passwordFromMailbox } from "@/lib/email/mailbox-service";
 import { sendSmtp } from "@/lib/email/smtp";
 import { ImapFlow } from "imapflow";
@@ -124,6 +125,25 @@ async function appendToSentFolder(
   }
 }
 
+export function sanitizeOutreachBody(body: string): string {
+  if (!body) return "";
+  return body
+    // Remove HubSpot, SignatureHound or generator image/icon placeholders
+    .replace(/(mobilePhone|emailAddress|address|phone|email)\s*\[https?:\/\/[^\]]+\]/gi, "")
+    .replace(/\[https?:\/\/[^\]]+(?:hubspot|signaturehound|signature-generator|icons)[^\]]*\]/gi, "")
+    // Remove redundant markdown tel links: "321-359-6688 [tel:3213596688]" -> "321-359-6688"
+    .replace(/([0-9+() -]{7,})\s*\[tel:[^\]]+\]/gi, "$1")
+    // Remove redundant markdown email links: "sales@domain.com [mailto:sales@domain.com]" or "sales@domain.com [info@domain.com]" -> "sales@domain.com"
+    .replace(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*\[(?:mailto:)?[^\]]+\]/gi, "$1")
+    // Remove question mark artifacts
+    .replace(/\?\?\s*([0-9+() -]{7,})/g, "$1")
+    .replace(/\?\?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, "$1")
+    .replace(/\?\?\s*([0-9]{1,5}\s+[A-Za-z0-9\s,.-]+)/g, "$1")
+    // Collapse excess newlines
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function sendFromMailbox(
   mailbox: MailboxSenderInfo,
   data: { to: string; subject: string; body: string; html?: string }
@@ -132,6 +152,8 @@ export async function sendFromMailbox(
     throw new Error("Mailbox credentials are not configured.");
   }
 
+  const normalizedEmail = mailbox.emailAddress.trim().toLowerCase();
+
   // 1. Company / Display Name resolution
   // Company name is taken directly from the mailbox Display Name.
   // When received by Gmail/Outlook, the display name appears in BOLD in the recipient inbox.
@@ -139,8 +161,8 @@ export async function sendFromMailbox(
   let companyName = cleanDisplayName;
 
   // Fallback: If display name is not set, derive clean company name from email domain
-  if (!companyName && mailbox.emailAddress.includes("@")) {
-    const domainPart = mailbox.emailAddress.split("@")[1]?.split(".")[0] || "";
+  if (!companyName && normalizedEmail.includes("@")) {
+    const domainPart = normalizedEmail.split("@")[1]?.split(".")[0] || "";
     if (domainPart) {
       if (domainPart.toLowerCase() === "swiftorbits") {
         companyName = "Swift Orbits";
@@ -153,12 +175,24 @@ export async function sendFromMailbox(
   // 2. RFC 5322 formatted sender: "Company Name" <user@domain.com>
   // Email clients render the company name in BOLD in the recipient inbox and header.
   const formattedFrom = companyName
-    ? `"${companyName.replace(/"/g, '')}" <${mailbox.emailAddress}>`
-    : mailbox.emailAddress;
+    ? `"${companyName.replace(/"/g, '')}" <${normalizedEmail}>`
+    : normalizedEmail;
 
-  // 3. Dual Plaintext + HTML format for crisp professional rendering
-  const textBody = data.body;
+  // 3. Clean and sanitize body to prevent spam filtering from corrupted characters
+  const cleanTextBody = sanitizeOutreachBody(data.body);
+
+  // Dual Plaintext + HTML format for crisp professional rendering
+  const textBody = cleanTextBody;
   const htmlBody = data.html || formatEmailBodyToHtml(textBody);
+
+  // 4. Domain-aligned RFC 5322 Message-ID
+  const domain = normalizedEmail.includes("@")
+    ? normalizedEmail.split("@")[1].trim()
+    : "swiftorbits.com";
+  const customMessageId = `<${Date.now()}.${crypto.randomBytes(8).toString("hex")}@${domain}>`;
+
+  const recipientMatch = data.to.match(/<([^>]+)>/);
+  const cleanRecipient = (recipientMatch ? recipientMatch[1] : data.to).trim().toLowerCase();
 
   const sendResult = await sendSmtp(
     {
@@ -174,6 +208,12 @@ export async function sendFromMailbox(
       subject: data.subject,
       text: textBody,
       html: htmlBody,
+      replyTo: normalizedEmail,
+      messageId: customMessageId,
+      envelope: {
+        from: normalizedEmail,
+        to: [cleanRecipient],
+      },
     }
   );
 
@@ -185,7 +225,7 @@ export async function sendFromMailbox(
     subject: data.subject,
     text: textBody,
     html: htmlBody,
-    messageId: sendResult?.messageId,
+    messageId: sendResult?.messageId || customMessageId,
   }).catch((err) => {
     console.warn("Background Hostinger Sent sync notice:", err);
   });

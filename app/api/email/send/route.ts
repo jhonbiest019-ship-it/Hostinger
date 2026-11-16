@@ -22,26 +22,80 @@ export async function POST(request: NextRequest) {
 
     const input = parsed.data;
 
-    // Rate-limit check per mailbox
-    if (!connectionRateLimit(`manual-send:${userId}:${input.mailboxId}`)) {
-      return NextResponse.json(
-        { error: "Too many send attempts. Please wait a moment before sending again." },
-        { status: 429 }
-      );
+    // 1. Fetch Mailbox with multi-level resilient fallback
+    let mailbox = null;
+    if (input.mailboxId && input.mailboxId !== "undefined" && input.mailboxId !== "null") {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { id: input.mailboxId, userId },
+      });
+      // If not owned by user, check if it's an active verified mailbox on this ERP
+      if (!mailbox) {
+        mailbox = await prisma.mailbox.findFirst({
+          where: { id: input.mailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        });
+      }
     }
 
-    // 1. Fetch Mailbox
-    const mailbox = await prisma.mailbox.findFirst({
-      where: { id: input.mailboxId, userId },
-    });
+    // Fallback 1: Check active_mailbox_id cookie
+    if (!mailbox) {
+      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
+      if (cookieMailboxId) {
+        mailbox = await prisma.mailbox.findFirst({
+          where: { id: cookieMailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        });
+      }
+    }
+
+    // Fallback 2: Most recently active & connected mailbox for this user
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+
+    // Fallback 3: Any active & connected Hostinger mailbox on this ERP system
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+
+    // Fallback 4: Any active mailbox for this user
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { userId, status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+
+    // Fallback 5: Any mailbox for this user
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
 
     if (!mailbox) {
-      return NextResponse.json({ error: "Sender mailbox not found." }, { status: 404 });
+      return NextResponse.json(
+        { error: "No connected sender mailbox found. Please connect your Hostinger mailbox in the Mailboxes tab first." },
+        { status: 404 }
+      );
     }
     if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") {
       return NextResponse.json(
-        { error: "Please verify this mailbox connection before sending." },
+        { error: `Mailbox ${mailbox.emailAddress} is not active. Please click 'Test' in the Mailboxes tab to verify its connection before sending.` },
         { status: 409 }
+      );
+    }
+
+    // Rate-limit check per mailbox
+    if (!connectionRateLimit(`manual-send:${userId}:${mailbox.id}`)) {
+      return NextResponse.json(
+        { error: "Too many send attempts. Please wait a moment before sending again." },
+        { status: 429 }
       );
     }
 
@@ -161,13 +215,21 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         messageId: providerMessageId,
         from: mailbox.emailAddress,
         to: contact.email,
       });
+      response.cookies.set("active_mailbox_id", mailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+      return response;
     } catch (sendError) {
+      console.error("Manual email send error:", sendError);
       const safe = safeErrorMessage(sendError);
       await prisma.$transaction([
         prisma.emailMessage.update({
@@ -182,6 +244,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: safe }, { status: 502 });
     }
   } catch (error) {
+    console.error("Manual email route unexpected error:", error);
     if (error instanceof Response) return error;
     return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 });
   }

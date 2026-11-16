@@ -20,6 +20,7 @@ type Mailbox = {
   lastCheckedAt: string | null;
   createdAt: string;
   lastError: string | null;
+  isOwner?: boolean;
 };
 
 type FormValues = {
@@ -108,17 +109,27 @@ export function MailboxWorkspace() {
       // Fetch active mailbox
       try {
         const activeRes = await request("/api/mailboxes/active");
-        if (activeRes.activeMailboxId) {
+        if (activeRes.activeMailboxId && list.some((m: Mailbox) => m.id === activeRes.activeMailboxId)) {
           setActiveMailboxId(activeRes.activeMailboxId);
           if (typeof window !== "undefined") {
             localStorage.setItem("active_sender_mailbox_id", activeRes.activeMailboxId);
           }
         } else if (list.length > 0) {
           const saved = typeof window !== "undefined" ? localStorage.getItem("active_sender_mailbox_id") : null;
-          setActiveMailboxId(saved || list[0].id);
+          const activeConnected = list.find((m: Mailbox) => m.status === "ACTIVE" && m.smtpStatus === "CONNECTED");
+          const target = (saved && list.some((m: Mailbox) => m.id === saved))
+            ? saved
+            : (activeConnected ? activeConnected.id : list[0].id);
+          setActiveMailboxId(target);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("active_sender_mailbox_id", target);
+          }
         }
       } catch {
-        if (list.length > 0) setActiveMailboxId(list[0].id);
+        if (list.length > 0) {
+          const activeConnected = list.find((m: Mailbox) => m.status === "ACTIVE" && m.smtpStatus === "CONNECTED");
+          setActiveMailboxId(activeConnected ? activeConnected.id : list[0].id);
+        }
       }
 
       if (typeof window !== "undefined") {
@@ -323,12 +334,29 @@ export function MailboxWorkspace() {
         }
       }
 
-      if (responseData?.connectionStatus === "ACTIVE" || responseData?.mailbox?.status === "ACTIVE") {
+      const isSavedActive = responseData?.connectionStatus === "ACTIVE" || responseData?.mailbox?.status === "ACTIVE";
+      const savedMbId = responseData?.mailbox?.id || (editing ? editing : null);
+
+      if (isSavedActive) {
         const isHst = payload.smtpHost?.includes("hostinger.com");
         setMessage({
           kind: "success",
-          text: `✓ Real-time connection verified! Connected successfully to ${payload.emailAddress}${isHst ? " on Hostinger" : " on Webmail / cPanel"}.`,
+          text: `✓ Real-time connection verified! Connected successfully to ${payload.emailAddress}${isHst ? " on Hostinger" : " on Webmail / cPanel"}. Mailbox is active.`,
         });
+        if (savedMbId) {
+          try {
+            await request("/api/mailboxes/active", {
+              method: "POST",
+              body: JSON.stringify({ mailboxId: savedMbId }),
+            });
+            setActiveMailboxId(savedMbId);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("active_sender_mailbox_id", savedMbId);
+              window.dispatchEvent(new CustomEvent("sender-mailbox-changed", { detail: { mailboxId: savedMbId } }));
+              window.dispatchEvent(new CustomEvent("mailboxes-updated"));
+            }
+          } catch {}
+        }
       } else if (responseData?.lastError || responseData?.mailbox?.lastError) {
         setMessage({
           kind: "error",
@@ -367,8 +395,21 @@ export function MailboxWorkspace() {
       } else if (body.success) {
         setMessage({
           kind: "success",
-          text: `✓ Connection Verified! SMTP and IMAP connected successfully. Mailbox is Active.`,
+          text: `✓ Connection Verified! SMTP and IMAP connected successfully. Mailbox is Active & Real-Time Active Sender.`,
         });
+        // Automatically make this verified mailbox the active real-time sender
+        try {
+          await request("/api/mailboxes/active", {
+            method: "POST",
+            body: JSON.stringify({ mailboxId: id }),
+          });
+          setActiveMailboxId(id);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("active_sender_mailbox_id", id);
+            window.dispatchEvent(new CustomEvent("sender-mailbox-changed", { detail: { mailboxId: id } }));
+            window.dispatchEvent(new CustomEvent("mailboxes-updated"));
+          }
+        } catch {}
       } else {
         setMessage({
           kind: "error",
@@ -645,9 +686,15 @@ export function MailboxWorkspace() {
                       <span className="font-bold text-slate-900 text-sm">
                         {mailbox.displayName || "Swift Orbits"}
                       </span>
-                      <span className="block text-[10px] text-purple-600 font-medium">
-                        (Inbox bold sender)
-                      </span>
+                      {mailbox.isOwner === false ? (
+                        <span className="block text-[10px] text-teal-600 font-semibold">
+                          (Shared ERP Mailbox)
+                        </span>
+                      ) : (
+                        <span className="block text-[10px] text-purple-600 font-medium">
+                          (Inbox bold sender)
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-4 font-mono text-xs">{mailbox.emailAddress}</td>
                     <td className="px-5 py-4">
@@ -691,20 +738,24 @@ export function MailboxWorkspace() {
                             ? "Test complete"
                             : "Test"}
                         </button>
-                        <button
-                          className="px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 rounded-xl border border-gray-200 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs"
-                          type="button"
-                          onClick={() => edit(mailbox)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="px-3 py-1.5 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer"
-                          type="button"
-                          onClick={() => void remove(mailbox.id)}
-                        >
-                          Disconnect
-                        </button>
+                        {mailbox.isOwner !== false && (
+                          <>
+                            <button
+                              className="px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-50 rounded-xl border border-gray-200 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer shadow-2xs"
+                              type="button"
+                              onClick={() => edit(mailbox)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="px-3 py-1.5 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer"
+                              type="button"
+                              onClick={() => void remove(mailbox.id)}
+                            >
+                              Disconnect
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

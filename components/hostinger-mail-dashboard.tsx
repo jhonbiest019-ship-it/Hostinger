@@ -129,6 +129,7 @@ export function HostingerMailDashboard() {
   const activeMailbox = useMemo(() => {
     return mailboxes.find((m) => m.id === composeMailboxId) || mailboxes[0] || null;
   }, [mailboxes, composeMailboxId]);
+  const selectedSender = activeMailbox;
 
   // Close mailbox dropdown when clicking outside or pressing Escape
   useEffect(() => {
@@ -228,28 +229,12 @@ export function HostingerMailDashboard() {
   function handleUseScheduledBrand() {
     if (!lastScheduledBrand) return;
     if (lastScheduledBrand.email) setComposeTo(lastScheduledBrand.email);
-    if (selectedTemplateId) {
-      const found = templates.find((t) => t.id === selectedTemplateId);
-      if (found) {
-        const { subj, bdy } = applyTemplateWithBrand(found.subject, found.body, lastScheduledBrand);
-        setComposeSubject(subj);
-        setComposeBody(bdy);
-      }
+    const targetTplId = selectedTemplateId || templates[0]?.id;
+    if (targetTplId) {
+      handleApplyTemplate(targetTplId);
     } else {
-      setComposeSubject((prev) =>
-        prev && prev.trim()
-          ? prev
-              .replace(/{{\s*brandName\s*}}/gi, lastScheduledBrand.brandName)
-              .replace(/{{\s*brand\s*}}/gi, lastScheduledBrand.brandName)
-          : `Partnership Proposal with ${lastScheduledBrand.brandName}`
-      );
-      setComposeBody((prev) =>
-        prev && prev.trim()
-          ? prev
-              .replace(/{{\s*brandName\s*}}/gi, lastScheduledBrand.brandName)
-              .replace(/{{\s*brand\s*}}/gi, lastScheduledBrand.brandName)
-          : `Hi ${lastScheduledBrand.brandName} Team,\n\nWe would love to discuss a partnership with ${lastScheduledBrand.brandName}.`
-      );
+      setDraftNotice(`✓ Set recipient: ${lastScheduledBrand.brandName}`);
+      setTimeout(() => setDraftNotice(""), 2500);
     }
   }
 
@@ -259,17 +244,12 @@ export function HostingerMailDashboard() {
       .then((data) => {
         if (data.templates) {
           setTemplates(data.templates);
-          const activeTpl = data.templates.find((t: any) => t.isDefault) || data.templates[0];
-          if (activeTpl) {
-            setSelectedTemplateId(activeTpl.id);
-            const { subj, bdy } = applyTemplateWithBrand(activeTpl.subject, activeTpl.body, lastScheduledBrand);
-            setComposeSubject(subj);
-            setComposeBody(bdy);
-          }
+          // Do NOT auto-overwrite composeSubject/composeBody on load!
+          // Custom compose must remain 100% clean and free unless user explicitly chooses a template.
         }
       })
       .catch(() => {});
-  }, [lastScheduledBrand]);
+  }, []);
 
   const refreshMailboxes = useCallback(async () => {
     try {
@@ -359,11 +339,18 @@ export function HostingerMailDashboard() {
 
   function handleApplyTemplate(id: string) {
     setSelectedTemplateId(id);
+    if (!id) {
+      setDraftNotice("✏️ Custom Email mode active — compose freely");
+      setTimeout(() => setDraftNotice(""), 2500);
+      return;
+    }
     const found = templates.find((t) => t.id === id);
     if (found) {
       const { subj, bdy } = applyTemplateWithBrand(found.subject, found.body, lastScheduledBrand);
       setComposeSubject(subj);
       setComposeBody(bdy);
+      setDraftNotice(`✓ Real-time active: Applied template "${found.name}"`);
+      setTimeout(() => setDraftNotice(""), 3000);
     }
   }
 
@@ -719,9 +706,12 @@ export function HostingerMailDashboard() {
       alert("Draft has no recipient address. Click 'Edit' to add a recipient.");
       return;
     }
-    const targetMailboxId = msg.mailboxId || composeMailboxId || mailboxes[0]?.id;
+    const validMailbox = (composeMailboxId && mailboxes.find((m) => m.id === composeMailboxId)) || mailboxes[0];
+    const targetMailboxId = (msg.mailboxId && mailboxes.some((m) => m.id === msg.mailboxId))
+      ? msg.mailboxId
+      : validMailbox?.id;
     if (!targetMailboxId) {
-      alert("No active verified sender mailbox available.");
+      alert("No active verified sender mailbox available. Please connect and verify your mailbox in Mailboxes section.");
       return;
     }
 
@@ -850,24 +840,29 @@ export function HostingerMailDashboard() {
       return;
     }
 
-    const targetMailboxId = composeMailboxId || mailboxes[0]?.id;
+    const validMailbox = (composeMailboxId && mailboxes.find((m) => m.id === composeMailboxId)) || mailboxes[0];
+    const targetMailboxId = validMailbox?.id;
     if (!targetMailboxId) {
       alert("Please connect and verify a Hostinger mailbox first in Mailboxes section.");
       return;
     }
 
-    const selectedSender = mailboxes.find((m) => m.id === targetMailboxId);
+    const selectedSender = validMailbox;
 
-    // Ensure brand name from last scheduled brand is cleanly populated if template tag remains
-    const finalSubject = composeSubject
-      .replace(/{{\s*brandName\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
-      .replace(/{{\s*brand\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
-      .trim();
+    // Only interpolate brand placeholders if user included dynamic tags like {{brandName}}
+    const finalSubject = composeSubject.includes("{{")
+      ? composeSubject
+          .replace(/{{\s*brandName\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
+          .replace(/{{\s*brand\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
+          .trim()
+      : composeSubject.trim();
 
-    const finalBody = composeBody
-      .replace(/{{\s*brandName\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
-      .replace(/{{\s*brand\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
-      .trim();
+    const finalBody = composeBody.includes("{{")
+      ? composeBody
+          .replace(/{{\s*brandName\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
+          .replace(/{{\s*brand\s*}}/gi, lastScheduledBrand?.brandName || "Brand")
+          .trim()
+      : composeBody.trim();
 
     setComposeSending(true);
     try {
@@ -1118,6 +1113,7 @@ export function HostingerMailDashboard() {
     setComposeTo("");
     setComposeSubject("");
     setComposeBody("");
+    setSelectedTemplateId("");
     setAttachments([]);
     setComposeDraftId(null);
     setFormatToolbarOpen(false);
@@ -2026,26 +2022,41 @@ export function HostingerMailDashboard() {
               <span className="text-gray-500 font-semibold w-12 shrink-0">From:</span>
               <div className="flex-1 flex items-center justify-between gap-2 min-w-0">
                 <select
-                  value={composeMailboxId}
+                  value={selectedSender?.id || composeMailboxId}
                   onChange={(e) => handleSwitchMailbox(e.target.value)}
                   className="bg-transparent font-medium text-gray-900 focus:outline-none cursor-pointer w-full truncate py-0.5 text-xs sm:text-sm hover:text-[#673DE6] transition-colors"
                 >
-                  {mailboxes.map((mb) => {
-                    const disp = mb.displayName || "";
-                    return (
-                      <option key={mb.id} value={mb.id} className="text-gray-900 font-medium">
-                        {disp ? `${disp} <${mb.emailAddress}>` : mb.emailAddress} {mb.smtpStatus === "CONNECTED" ? "✓" : ""}
-                      </option>
-                    );
-                  })}
+                  {mailboxes.length === 0 ? (
+                    <option value="" disabled className="text-gray-400">
+                      No verified mailbox available — connect Hostinger in Mailboxes
+                    </option>
+                  ) : (
+                    mailboxes.map((mb) => {
+                      const disp = mb.displayName || "";
+                      return (
+                        <option key={mb.id} value={mb.id} className="text-gray-900 font-medium">
+                          {disp ? `${disp} <${mb.emailAddress}>` : mb.emailAddress} {mb.smtpStatus === "CONNECTED" ? "✓" : ""}
+                        </option>
+                      );
+                    })
+                  )}
                 </select>
-                <span
-                  className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200"
-                  title="Real-time Active Hostinger Mailbox"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Active
-                </span>
+                {selectedSender ? (
+                  <span
+                    className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200"
+                    title={`Real-time Active Hostinger Mailbox (${selectedSender.emailAddress})`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Active
+                  </span>
+                ) : (
+                  <Link
+                    href="/mailboxes"
+                    className="shrink-0 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 hover:bg-amber-100 transition"
+                  >
+                    + Connect
+                  </Link>
+                )}
               </div>
             </div>
 
@@ -2107,15 +2118,67 @@ export function HostingerMailDashboard() {
                     </span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={handleUseScheduledBrand}
-                  className="shrink-0 text-[11px] font-bold text-[#673DE6] hover:text-[#5025D1] bg-white border border-purple-200 px-2 py-0.5 rounded-md shadow-2xs hover:bg-purple-50 cursor-pointer ml-2 transition"
-                >
-                  ⚡ Auto-fill Template & Recipient
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  {lastScheduledBrand.email && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComposeTo(lastScheduledBrand.email);
+                        setDraftNotice(`✓ Set recipient: ${lastScheduledBrand.email}`);
+                        setTimeout(() => setDraftNotice(""), 2500);
+                      }}
+                      className="text-[11px] font-bold text-gray-700 hover:text-[#673DE6] bg-white border border-gray-200 px-2 py-0.5 rounded-md shadow-2xs hover:bg-purple-50 cursor-pointer transition"
+                      title="Set recipient email only"
+                    >
+                      📧 Use Recipient
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleUseScheduledBrand}
+                    className="text-[11px] font-bold text-[#673DE6] hover:text-[#5025D1] bg-white border border-purple-200 px-2 py-0.5 rounded-md shadow-2xs hover:bg-purple-50 cursor-pointer transition"
+                    title="Apply brand to selected template"
+                  >
+                    ⚡ Auto-fill Brand
+                  </button>
+                </div>
               </div>
             )}
+
+            {/* Real-time Template Selector: Custom vs Any Saved Template */}
+            <div className="flex items-center border-b border-gray-100 py-1.5 gap-2 text-xs sm:text-sm bg-purple-50/30 px-2.5 rounded-xl border border-purple-100/50">
+              <span className="text-gray-600 font-semibold w-16 shrink-0 flex items-center gap-1 text-[11px] sm:text-xs">
+                <span>📄</span> Template:
+              </span>
+              <div className="flex-1 flex items-center gap-2 min-w-0">
+                <select
+                  value={selectedTemplateId}
+                  onChange={(e) => handleApplyTemplate(e.target.value)}
+                  className="w-full bg-white border border-gray-200 text-gray-800 rounded-lg px-2.5 py-1 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-[#673DE6] cursor-pointer hover:border-purple-300 transition"
+                >
+                  <option value="">✏️ Custom Email (No Template / Type Freely)</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      📄 {t.name} {t.isDefault ? "★ (Default)" : ""}
+                    </option>
+                  ))}
+                </select>
+                {selectedTemplateId ? (
+                  <button
+                    type="button"
+                    onClick={() => handleApplyTemplate("")}
+                    className="shrink-0 text-[11px] font-semibold text-gray-600 hover:text-red-600 bg-white border border-gray-200 hover:bg-red-50 px-2 py-0.5 rounded-md transition cursor-pointer shadow-2xs"
+                    title="Clear template and switch back to Custom Email"
+                  >
+                    Clear
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                    Custom Mode
+                  </span>
+                )}
+              </div>
+            </div>
 
             {/* Subject */}
             <div className="flex items-center border-b border-gray-100 py-1.5 gap-2 text-xs sm:text-sm">

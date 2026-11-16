@@ -19,10 +19,20 @@ export async function POST(request: NextRequest) {
       ? await prisma.mailbox.findFirst({ where: { id: parsed.data.mailboxId, userId } })
       : null;
 
-    if (!mailbox) {
+    if (!mailbox && parsed.data.mailboxId) {
       mailbox = await prisma.mailbox.findFirst({
+        where: { id: parsed.data.mailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+      });
+    }
+
+    if (!mailbox) {
+      mailbox = (await prisma.mailbox.findFirst({
         where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-      }) || await prisma.mailbox.findFirst({ where: { userId } });
+        orderBy: { updatedAt: "desc" },
+      })) || (await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+      })) || (await prisma.mailbox.findFirst({ where: { userId } }));
     }
 
     if (!mailbox) {

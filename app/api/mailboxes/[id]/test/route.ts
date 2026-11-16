@@ -50,7 +50,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     });
 
     console.info("mailbox_connection_test", { mailboxId: id, userId, operation: "smtp+imap_verify", timestamp: now.toISOString(), success: result.smtp && result.imap, errorCategory: lastError });
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: result.smtp && result.imap,
       smtp: result.smtp ? "Connected" : "Failed",
       imap: result.imap ? "Connected" : "Failed",
@@ -61,6 +61,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         ? "SMTP and IMAP connections verified."
         : (lastError || "Connection test completed with failures."),
     });
+
+    if (result.smtp && result.imap) {
+      response.cookies.set("active_mailbox_id", mailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof Response) return error;
     const safeMessage = safeErrorMessage(error);

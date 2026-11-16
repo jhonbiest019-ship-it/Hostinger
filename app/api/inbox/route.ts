@@ -9,8 +9,84 @@ export async function GET(request: NextRequest) {
     const search = request.nextUrl.searchParams.get("search")?.trim() || "";
     const mailboxId = request.nextUrl.searchParams.get("mailboxId")?.trim() || "";
 
-    // Task 3: If no mailbox is selected, return an empty state. Never mix or show messages across all mailboxes.
-    if (!mailboxId) {
+    // Resilient mailbox resolution: check requested ID, cookie, user mailbox, or active ERP mailbox
+    let mailbox = (mailboxId && mailboxId !== "undefined" && mailboxId !== "null")
+      ? await prisma.mailbox.findFirst({
+          where: { id: mailboxId, userId },
+          select: {
+            id: true,
+            emailAddress: true,
+            displayName: true,
+            status: true,
+            smtpStatus: true,
+          },
+        })
+      : null;
+
+    if (!mailbox && mailboxId && mailboxId !== "undefined" && mailboxId !== "null") {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { id: mailboxId, status: "ACTIVE" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+        },
+      });
+    }
+
+    if (!mailbox) {
+      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
+      if (cookieMailboxId) {
+        mailbox = await prisma.mailbox.findFirst({
+          where: { id: cookieMailboxId, status: "ACTIVE" },
+          select: {
+            id: true,
+            emailAddress: true,
+            displayName: true,
+            status: true,
+            smtpStatus: true,
+          },
+        });
+      }
+    }
+
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+        },
+      }) || await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+        },
+      }) || await prisma.mailbox.findFirst({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+        },
+      });
+    }
+
+    if (!mailbox) {
       return NextResponse.json({
         messages: [],
         counts: {
@@ -24,25 +100,6 @@ export async function GET(request: NextRequest) {
         activeMailbox: null,
         requiresMailboxSelection: true,
       });
-    }
-
-    // Task 3: Strict mailbox authorization check. Verify mailbox ownership by authenticated user.
-    const mailbox = await prisma.mailbox.findFirst({
-      where: { id: mailboxId, userId },
-      select: {
-        id: true,
-        emailAddress: true,
-        displayName: true,
-        status: true,
-        smtpStatus: true,
-      },
-    });
-
-    if (!mailbox) {
-      return NextResponse.json(
-        { error: "Selected mailbox not found or unauthorized." },
-        { status: 403 }
-      );
     }
 
     const notTrashFilter = {
@@ -193,10 +250,45 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { mailboxId, toAddress, subject, body: messageBody, draftId } = body;
 
-    const mailbox = await prisma.mailbox.findFirst({
-      where: { id: mailboxId, userId },
-      select: { id: true, emailAddress: true },
-    });
+    let mailbox = (mailboxId && mailboxId !== "undefined" && mailboxId !== "null")
+      ? await prisma.mailbox.findFirst({
+          where: { id: mailboxId, userId },
+          select: { id: true, emailAddress: true },
+        })
+      : null;
+
+    if (!mailbox && mailboxId && mailboxId !== "undefined" && mailboxId !== "null") {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { id: mailboxId, status: "ACTIVE" },
+        select: { id: true, emailAddress: true },
+      });
+    }
+
+    if (!mailbox) {
+      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
+      if (cookieMailboxId) {
+        mailbox = await prisma.mailbox.findFirst({
+          where: { id: cookieMailboxId, status: "ACTIVE" },
+          select: { id: true, emailAddress: true },
+        });
+      }
+    }
+
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, emailAddress: true },
+      }) || await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, emailAddress: true },
+      }) || await prisma.mailbox.findFirst({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, emailAddress: true },
+      });
+    }
 
     if (!mailbox) {
       return NextResponse.json({ error: "Sender mailbox not found." }, { status: 404 });

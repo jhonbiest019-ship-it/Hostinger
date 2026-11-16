@@ -718,7 +718,7 @@ export function ScheduledWorkspace() {
   async function load() {
     try {
       const [response, activeRes] = await Promise.all([
-        fetch(`/api/scheduled?status=${filter}&page=1`),
+        fetch(`/api/scheduled?status=${filter}&page=1&pageSize=500`),
         fetch("/api/campaigns/active-status").catch(() => null),
       ]);
       const body = await response.json();
@@ -1673,7 +1673,12 @@ export function ScheduledWorkspace() {
       {/* Scheduled Queue List */}
       <section className="space-y-4">
         {(() => {
-          const campaignOptions = Array.from(new Set(jobs.map((j) => j.campaign?.name).filter(Boolean))) as string[];
+          const campaignOptions = Array.from(
+            new Set([
+              ...campaigns.map((c) => c.name),
+              ...jobs.map((j) => j.campaign?.name).filter(Boolean),
+            ].filter(Boolean))
+          ) as string[];
           const displayedJobs = campaignFilter === "ALL" ? jobs : jobs.filter((j) => j.campaign?.name === campaignFilter);
 
           const pendingJobs = displayedJobs.filter((j) => j.status === "PENDING" || j.status === "PROCESSING");

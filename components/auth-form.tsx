@@ -62,6 +62,14 @@ export function AuthForm({ mode: initialMode }: { mode: "login" | "signup" }) {
         throw new Error(body.error || "Unable to proceed.");
       }
 
+      // Clear previous user's cached active mailbox ID so cross-account contamination never occurs
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.removeItem("active_sender_mailbox_id");
+          document.cookie = "active_mailbox_id=; path=/; max-age=0";
+        } catch {}
+      }
+
       // Hard redirect to /dashboard guarantees the session cookie is immediately sent and dashboard loads
       window.location.href = "/dashboard";
     } catch (err) {

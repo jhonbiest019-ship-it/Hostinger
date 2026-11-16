@@ -122,11 +122,20 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       },
       select,
     });
-    return NextResponse.json({
+    const response = NextResponse.json({
       mailbox: publicMailbox(mailbox),
       connectionStatus: newStatus,
       lastError: newLastError,
     });
+    if (newStatus === "ACTIVE") {
+      response.cookies.set("active_mailbox_id", mailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+    }
+    return response;
   } catch (error) { if (error instanceof Response) return error; if (error instanceof Error && error.message.includes("Unique constraint")) return NextResponse.json({ error: "A mailbox with this email address already exists." }, { status: 409 }); return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 }); }
 }
 

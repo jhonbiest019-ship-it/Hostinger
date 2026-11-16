@@ -1542,7 +1542,7 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
               method: "POST",
               credentials: "include",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ mode: "sendNow" }),
+              body: JSON.stringify({ mode: "sendNow", delaySeconds: 60 }),
             });
             const sendData = await sendRes.json();
             if (!sendRes.ok) throw new Error(sendData.error || "Unable to dispatch campaign.");

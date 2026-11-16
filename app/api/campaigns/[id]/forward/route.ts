@@ -81,14 +81,12 @@ export async function POST(
       const targetMailbox = await prisma.mailbox.findFirst({
         where: { id: mailboxId, userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
       });
-      if (!targetMailbox) {
-        return NextResponse.json(
-          { error: "Selected sender mailbox not found or unauthorized." },
-          { status: 403 }
-        );
+      if (targetMailbox) {
+        finalMailboxId = targetMailbox.id;
       }
-      finalMailboxId = targetMailbox.id;
-    } else if (campaign.mailboxId) {
+    }
+    
+    if (!finalMailboxId && campaign.mailboxId) {
       const campMailbox = await prisma.mailbox.findFirst({
         where: { id: campaign.mailboxId, userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
       });

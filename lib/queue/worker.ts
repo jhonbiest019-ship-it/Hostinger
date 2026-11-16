@@ -221,12 +221,23 @@ export async function processDueJobs(options: { blockedMailboxIds?: string[] } =
       try {
         const result = await processJob(job.id, token, config.maxAttempts, config.leaseMs);
         if (result === "sent") sent++; if (result === "failed") failed++;
+        
+        // Anti-spam protection: Enforce natural human pacing between consecutive live sends
+        if (result === "sent") {
+          const safeDelayMs = process.env.EMAIL_TEST_MODE === "true"
+            ? (config.delayMs || 0)
+            : Math.max(config.delayMs || 0, 30_000) + Math.floor(Math.random() * 15_000); // 30-45s natural jitter
+          if (safeDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, safeDelayMs));
+          }
+        } else if (config.delayMs) {
+          await new Promise((resolve) => setTimeout(resolve, config.delayMs));
+        }
       } catch {
         // Leave the lease for conservative recovery; one broken job must not stop the batch.
         console.error("queue_job_failed", { jobId: job.id, message: "Processing interrupted; the lease recovery will inspect delivery state." }); failed++;
       }
       processed++;
-      if (config.delayMs) await new Promise((resolve) => setTimeout(resolve, config.delayMs));
     }
     return { discovered: due.length, processed, sent, failed, recovered: recovery };
   })).value ?? { discovered: 0, processed: 0, sent: 0, failed: 0, skipped: "lease-held" };

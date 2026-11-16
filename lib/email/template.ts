@@ -29,9 +29,30 @@ export function autoFormatGreetingWithBrand(body: string): string {
     .replace(/^Team,/gim, "{{brandName}} Team,");
 }
 
+/**
+ * Resolves Spintax patterns like {Hi|Hello|Dear} or {I hope you are well|Hope all is well}.
+ * If nested or simple spintax is present, it randomly chooses one branch to guarantee
+ * unique content fingerprinting per email, bypassing spam filter cluster algorithms.
+ */
+export function resolveSpintax(text: string): string {
+  if (!text) return "";
+  let current = text;
+  // Match {option1|option2|...} but ignore template placeholders like {{brandName}}
+  const spintaxRegex = /\{([^{}|]+(?:\|[^{}|]+)+)\}/g;
+  let loops = 0;
+  while (spintaxRegex.test(current) && loops < 10) {
+    current = current.replace(spintaxRegex, (_, optionsStr: string) => {
+      const options = optionsStr.split("|");
+      return options[Math.floor(Math.random() * options.length)].trim();
+    });
+    loops++;
+  }
+  return current;
+}
+
 export function renderTemplate(value: string, contact: TemplateContact) {
   if (!value) return "";
-  if (!contact) return value;
+  if (!contact) return resolveSpintax(value);
 
   const brand = String(
     contact.brandName ||
@@ -54,7 +75,7 @@ export function renderTemplate(value: string, contact: TemplateContact) {
     prepared = prepared.replace(/\[\s*category\s*name\s*\]/gi, cat);
   }
 
-  return prepared.replace(/{{\s*([^}]+)\s*}}/g, (_, rawVariable: string) => {
+  const rendered = prepared.replace(/{{\s*([^}]+)\s*}}/g, (_, rawVariable: string) => {
     const raw = rawVariable.trim();
     // 1. Direct key match
     if (contact[raw] !== undefined && contact[raw] !== null) {
@@ -88,6 +109,8 @@ export function renderTemplate(value: string, contact: TemplateContact) {
     }
     return "";
   });
+
+  return resolveSpintax(rendered);
 }
 
 export function escapeHtml(text: string): string {
@@ -106,6 +129,20 @@ export function formatBodyText(text: string): string {
   return safe;
 }
 
+export function renderParagraphsHtml(text: string): string {
+  if (!text) return "";
+  const paragraphs = text.split(/\n\s*\n/);
+  return paragraphs
+    .map((para) => {
+      const trimmed = para.trim();
+      if (!trimmed) return "";
+      const lines = trimmed.split("\n").map((line) => formatBodyText(line));
+      return `<p style="margin: 0 0 14px 0; line-height: 1.6; font-size: 15px; color: #111827;">${lines.join("<br />")}</p>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function formatEmailBodyToHtml(text: string): string {
   if (!text) return "";
   if (/<(html|table)\b/i.test(text.trim())) {
@@ -115,7 +152,7 @@ export function formatEmailBodyToHtml(text: string): string {
   // Check for standard signature delimiter '--'
   const sigMatch = text.match(/(^|\n)--\s*\n([\s\S]+)$/);
   if (!sigMatch) {
-    return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6; white-space: pre-wrap;">${formatBodyText(text)}</div>`;
+    return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">${renderParagraphsHtml(text)}</div>`;
   }
 
   const mainPart = text.slice(0, sigMatch.index).trimEnd();
@@ -126,7 +163,7 @@ export function formatEmailBodyToHtml(text: string): string {
   const hasPipe = sigLines.length >= 2 && sigLines.some((l) => l.includes("|"));
 
   if (!hasPipe) {
-    return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6; white-space: pre-wrap;">${formatBodyText(text)}</div>`;
+    return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">${renderParagraphsHtml(text)}</div>`;
   }
 
   // Parse rows with pipe '|'
@@ -218,7 +255,7 @@ export function formatEmailBodyToHtml(text: string): string {
   </table>`;
 
   return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">
-    <div style="white-space: pre-wrap;">${formatBodyText(mainPart)}</div>
+    ${renderParagraphsHtml(mainPart)}
     ${sigHtml}
   </div>`;
 }

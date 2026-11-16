@@ -6,7 +6,17 @@ import { campaignSchema } from "@/lib/campaign";
 function counters(recipients: { status: string }[]) { return { total: recipients.length, pending: recipients.filter((item) => item.status === "PENDING").length, sending: recipients.filter((item) => item.status === "SENDING").length, sent: recipients.filter((item) => item.status === "SENT").length, failed: recipients.filter((item) => item.status === "FAILED").length, skipped: recipients.filter((item) => item.status === "SKIPPED").length }; }
 const select = { id: true, name: true, description: true, status: true, sheetUrl: true, sheetWebhookUrl: true, mailbox: { select: { id: true, emailAddress: true, displayName: true, status: true, smtpStatus: true } }, template: { select: { id: true, name: true, subject: true } }, createdAt: true, updatedAt: true, recipients: { select: { status: true } } } as const;
 
-export async function GET(request: NextRequest) { try { const userId = await requireUser(request); const campaigns = await prisma.campaign.findMany({ where: { userId }, select, orderBy: { updatedAt: "desc" } }); return NextResponse.json({ campaigns: campaigns.map((campaign) => ({ ...campaign, counters: counters(campaign.recipients) })) }); } catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Unable to load campaigns." }, { status: 500 }); } }
+export async function GET(request: NextRequest) {
+  try {
+    const userId = await requireUser(request);
+    const campaigns = await prisma.campaign.findMany({ where: { userId }, select, orderBy: { updatedAt: "desc" } });
+    return NextResponse.json({ campaigns: campaigns.map((campaign) => ({ ...campaign, counters: counters(campaign.recipients) })) });
+  } catch (error) {
+    console.error("[DEBUG /api/campaigns] error:", error);
+    if (error instanceof Response) return error;
+    return NextResponse.json({ error: "Unable to load campaigns." }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {

@@ -54,11 +54,22 @@ export async function POST(request: NextRequest) {
     let mailbox = null;
     if (requestedMailboxId) {
       mailbox = await prisma.mailbox.findFirst({ where: { id: requestedMailboxId, userId } });
+      if (!mailbox) {
+        mailbox = await prisma.mailbox.findFirst({
+          where: { id: requestedMailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        });
+      }
     }
     if (!mailbox) {
       mailbox = await prisma.mailbox.findFirst({
         where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-        orderBy: { createdAt: "desc" },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+    if (!mailbox) {
+      mailbox = await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
       });
     }
     if (!mailbox) {

@@ -72,7 +72,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         }
       }
       if (!mailbox) {
-        mailbox = await tx.mailbox.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { createdAt: "asc" } });
+        mailbox = (await tx.mailbox.findFirst({ where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" }, orderBy: { updatedAt: "desc" } }))
+          || (await tx.mailbox.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }));
         if (mailbox) {
           await tx.campaign.update({ where: { id }, data: { mailboxId: mailbox.id } });
         }
@@ -128,18 +129,30 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         throw new SchedulingError("No valid pending recipients are available in this campaign.");
       }
 
-      const delaySec = Math.max(0, parseInt(String(parsed.data.delaySeconds ?? (parsed.data.mode === "sendNow" ? 2 : 60)), 10));
+      const isTestMode = process.env.EMAIL_TEST_MODE === "true";
+      const baseDelaySec = parsed.data.delaySeconds !== undefined
+        ? Math.max(isTestMode ? 0 : 20, parseInt(String(parsed.data.delaySeconds), 10))
+        : (isTestMode ? 2 : 60);
 
-      await tx.scheduledJob.createMany({
-        data: recipients.map((item, idx) => ({
+      let accumulatedMs = 0;
+      const jobsToCreate = recipients.map((item, idx) => {
+        if (idx > 0) {
+          const jitterSec = isTestMode ? 0 : (Math.floor(Math.random() * 16) + 5);
+          accumulatedMs += (baseDelaySec + jitterSec) * 1000;
+        }
+        return {
           userId,
           campaignId: id,
           campaignRecipientId: item.id,
           jobType: "INITIAL_EMAIL" as const,
           followUpStep: 0,
-          runAt: new Date(runAt.getTime() + idx * delaySec * 1000),
+          runAt: new Date(runAt.getTime() + accumulatedMs),
           timezone,
-        })),
+        };
+      });
+
+      await tx.scheduledJob.createMany({
+        data: jobsToCreate,
       });
 
       await tx.campaignRecipient.updateMany({
@@ -147,7 +160,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         data: { status: "SKIPPED" },
       });
 
-      return { count: recipients.length, delaySec, mailboxEmail: mailbox.emailAddress };
+      return { count: recipients.length, delaySec: baseDelaySec, mailboxEmail: mailbox.emailAddress };
     });
 
     if (parsed.data.mode === "sendNow") {

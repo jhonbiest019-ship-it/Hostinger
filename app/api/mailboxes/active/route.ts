@@ -57,10 +57,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 3. Fallback to first active and connected mailbox
-    const firstActiveMailbox = await prisma.mailbox.findFirst({
+    // 3. Fallback to most recently active and connected mailbox
+    let firstActiveMailbox = await prisma.mailbox.findFirst({
       where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-      orderBy: { createdAt: "asc" },
+      orderBy: { updatedAt: "desc" },
       select: {
         id: true,
         emailAddress: true,
@@ -71,10 +71,69 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({
+    // 4. Fallback to any active mailbox for this user
+    if (!firstActiveMailbox) {
+      firstActiveMailbox = await prisma.mailbox.findFirst({
+        where: { userId, status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+          imapStatus: true,
+        },
+      });
+    }
+
+    // 5. Fallback to any mailbox for this user
+    if (!firstActiveMailbox) {
+      firstActiveMailbox = await prisma.mailbox.findFirst({
+        where: { userId },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+          imapStatus: true,
+        },
+      });
+    }
+
+    // 6. Global fallback: Any active & connected Hostinger mailbox on this ERP system
+    if (!firstActiveMailbox) {
+      firstActiveMailbox = await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+          imapStatus: true,
+        },
+      });
+    }
+
+    const response = NextResponse.json({
       activeMailboxId: firstActiveMailbox?.id || null,
       mailbox: firstActiveMailbox || null,
     });
+
+    if (firstActiveMailbox?.id) {
+      response.cookies.set("active_mailbox_id", firstActiveMailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof Response) return error;
     return NextResponse.json({ error: safeErrorMessage(error) }, { status: 500 });
@@ -92,7 +151,10 @@ export async function POST(request: NextRequest) {
     }
 
     const mailbox = await prisma.mailbox.findFirst({
-      where: { id: mailboxId, userId },
+      where: {
+        id: mailboxId,
+        OR: [{ userId }, { status: "ACTIVE", smtpStatus: "CONNECTED" }],
+      },
       select: {
         id: true,
         emailAddress: true,

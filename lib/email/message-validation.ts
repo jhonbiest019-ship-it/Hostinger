@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const sendSchema = z
   .object({
-    mailboxId: z.string().min(1),
+    mailboxId: z.string().optional(),
     contactId: z.string().optional(),
     recipient: z.string().email().optional(),
     templateId: z.string().optional(),
