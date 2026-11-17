@@ -2584,9 +2584,10 @@ export function ScheduledWorkspace() {
 
       {/* Universal Campaign Edit Modal in Scheduled Workspace */}
       {editCampaignModalOpen && targetEditCampaign && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl border border-purple-200 my-8 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="w-full max-w-lg max-h-[92vh] flex flex-col rounded-3xl bg-white shadow-2xl border border-purple-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden my-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 pb-3.5 border-b border-gray-100 bg-white shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-[#673DE6] to-[#5025D1] text-white flex items-center justify-center text-base font-bold shadow-md shadow-purple-500/25">
                   ✏️
@@ -2605,7 +2606,8 @@ export function ScheduledWorkspace() {
               </button>
             </div>
 
-            <form onSubmit={handleSaveEditedCampaign} className="mt-4 space-y-3.5 text-xs">
+            <form onSubmit={handleSaveEditedCampaign} className="flex flex-col flex-1 overflow-hidden min-h-0 text-xs">
+              <div className="p-5 space-y-3.5 overflow-y-auto flex-1">
               <div>
                 <label className="block font-bold text-gray-700 mb-1">Campaign Title</label>
                 <input
@@ -2703,7 +2705,10 @@ export function ScheduledWorkspace() {
                 />
               </div>
 
-              <div className="pt-3 flex items-center justify-end gap-2 border-t border-gray-100">
+              </div>
+
+              {/* Fixed Footer */}
+              <div className="p-4 bg-gray-50/95 border-t border-gray-100 flex items-center justify-end gap-2.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => setEditCampaignModalOpen(false)}
@@ -2714,7 +2719,7 @@ export function ScheduledWorkspace() {
                 <button
                   type="submit"
                   disabled={editCampaignSaving}
-                  className="px-5 py-2 bg-gradient-to-r from-[#673DE6] to-[#5025D1] hover:from-[#784ef7] hover:to-[#5f2ee0] text-white font-bold rounded-xl shadow-md shadow-purple-500/25 transition disabled:opacity-50 cursor-pointer hover:scale-105 active:scale-95"
+                  className="px-5 py-2.5 bg-gradient-to-r from-[#673DE6] to-[#5025D1] hover:from-[#784ef7] hover:to-[#5f2ee0] text-white font-bold rounded-xl shadow-md shadow-purple-500/25 transition disabled:opacity-50 cursor-pointer hover:scale-102 active:scale-98"
                 >
                   {editCampaignSaving ? "Saving..." : "Save Changes"}
                 </button>
@@ -2758,10 +2763,10 @@ export function ScheduledWorkspace() {
         } catch {}
 
         return (
-          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-            <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl border border-purple-200 my-8 animate-in fade-in zoom-in-95 duration-150 space-y-4">
-              {/* Modal Header */}
-              <div className="flex items-start justify-between pb-3 border-b border-gray-100">
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+            <div className="w-full max-w-xl max-h-[92vh] flex flex-col rounded-3xl bg-white shadow-2xl border border-purple-200 animate-in fade-in zoom-in-95 duration-150 overflow-hidden my-auto">
+              {/* Modal Header - Always Visible */}
+              <div className="flex items-start justify-between p-5 pb-3.5 border-b border-gray-100 bg-white shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#673DE6] to-[#5025D1] text-white flex items-center justify-center text-lg font-bold shadow-md shadow-purple-500/25">
                     🕒
@@ -2789,8 +2794,10 @@ export function ScheduledWorkspace() {
                 </button>
               </div>
 
-              {/* Form Body */}
-              <form onSubmit={handleExecuteScheduleCamp} className="space-y-4 text-xs">
+              {/* Form Body with internal scrolling and sticky footer */}
+              <form onSubmit={handleExecuteScheduleCamp} className="flex flex-col flex-1 overflow-hidden min-h-0 text-xs">
+                {/* Scrollable Form Content */}
+                <div className="p-5 space-y-4 overflow-y-auto flex-1">
                 {/* 1. Send Mode Selector */}
                 <div>
                   <label className="block font-bold text-gray-700 mb-1.5 uppercase text-[10px] tracking-wider">
@@ -3114,8 +3121,10 @@ export function ScheduledWorkspace() {
                   </div>
                 </div>
 
-                {/* Footer Buttons */}
-                <div className="pt-3 flex items-center justify-end gap-2 border-t border-gray-100">
+                </div>
+
+                {/* Fixed Footer Buttons - Always Fully Visible at Bottom */}
+                <div className="p-4 bg-gray-50/95 border-t border-gray-100 flex items-center justify-end gap-2.5 shrink-0 backdrop-blur-xs">
                   <button
                     type="button"
                     onClick={() => setScheduleCampModalOpen(false)}
