@@ -7,6 +7,7 @@ import { clearWorkerStopFile } from "@/lib/campaign-controls";
 import { discoverBrandFormUrl } from "@/lib/forms/discovery";
 import { resolveFormTemplateValues } from "@/lib/forms/resolver";
 import { browserAgent } from "@/lib/browser/agent";
+import { extractRowData } from "@/lib/sheet-detect";
 
 export async function POST(request: NextRequest) {
   try {
@@ -232,19 +233,15 @@ export async function POST(request: NextRequest) {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const rawEmail = String(row.brandEmail || "").trim().toLowerCase();
-      const isValidEmail = Boolean(
-        rawEmail &&
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) &&
-        !/^(n\/a|none|undefined|null|-)$/i.test(rawEmail)
-      );
-
-      const brandName = String(row.brandName || "").trim() || (isValidEmail ? rawEmail.split("@")[0] : `Lead #${i + 1}`);
-      const productCategory = String(row.productCategory || row.category || "").trim();
-      const asin = String(row.asin || "").trim() || null;
-      const amazonLink = String(row.amazonLink || "").trim();
-      const website = String(row.website || amazonLink || "").trim() || null;
-      const rowIndex = row.sheetNum || row.rowIndex || (selectedStartRow + i);
+      const extracted = extractRowData(row, selectedStartRow + i);
+      const rawEmail = extracted.brandEmail;
+      const isValidEmail = extracted.isValidEmail;
+      const brandName = extracted.brandName;
+      const productCategory = extracted.productCategory;
+      const asin = extracted.asin || null;
+      const amazonLink = extracted.amazonLink || "";
+      const website = extracted.website || amazonLink || null;
+      const rowIndex = extracted.sheetNum;
 
       let recipient = null;
       let contact = null;

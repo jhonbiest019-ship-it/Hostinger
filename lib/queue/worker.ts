@@ -131,21 +131,32 @@ async function processJob(id: string, leaseToken: string, maxAttempts: number, l
     : (template?.body ?? "");
 
   if (!mailbox || mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED" || (!template && (!rawSubject || !rawBody))) return finish("FAILED", "Mailbox or template is unavailable. Verify the connection and selected template.");
+  const rawBrand = (recipient.snapshotBrand && !recipient.snapshotBrand.startsWith("Lead #") && !recipient.snapshotBrand.startsWith("Item #"))
+    ? recipient.snapshotBrand
+    : (contact.brandName || contact.companyName || contact.company || contact.fullName || contact.name || "");
+
+  const rawCat = (recipient.productCategory && recipient.productCategory.toLowerCase() !== "general" && recipient.productCategory.toLowerCase() !== "missing category")
+    ? recipient.productCategory
+    : (contact.notes || recipient.productCategory || "General");
+
   const variables = {
     firstName: contact.firstName,
     lastName: contact.lastName,
     fullName: contact.fullName ?? contact.name,
-    brandName: recipient.snapshotBrand ?? contact.brandName ?? contact.companyName ?? contact.company ?? contact.name ?? "",
-    companyName: contact.companyName ?? contact.company ?? recipient.snapshotBrand ?? contact.brandName ?? contact.name,
-    email: contact.email,
+    brandName: rawBrand,
+    companyName: contact.companyName ?? contact.company ?? rawBrand,
+    email: recipient.snapshotEmail || contact.email,
+    snapshotEmail: recipient.snapshotEmail || contact.email,
     phone: contact.phone,
     website: contact.website,
     formUrl: contact.formUrl,
     asin: contact.formUrl ?? "",
     amazonLink: contact.website ?? "",
-    productCategory: recipient.productCategory ?? contact.notes ?? "",
-    category: recipient.productCategory ?? contact.notes ?? "",
+    productCategory: rawCat,
+    category: rawCat,
     notes: contact.notes,
+    sheetNum: recipient.sheetRowIndex ?? "",
+    num: recipient.sheetRowIndex ?? "",
   };
   const subject = renderTemplate(rawSubject, variables); const body = renderTemplate(rawBody, variables);
   // Serialize with pause/cancel and reply handling immediately before handing a message to SMTP.

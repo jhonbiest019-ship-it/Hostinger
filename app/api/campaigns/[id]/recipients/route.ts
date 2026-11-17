@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { lockEditableCampaign } from "@/lib/campaign-controls";
 import { recipientSchema } from "@/lib/campaign";
 import { processDueJobs } from "@/lib/queue/worker";
+import { extractRowData } from "@/lib/sheet-detect";
 
 export async function PUT(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
@@ -25,7 +26,7 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
     const ids = [...new Set(parsed.data.contactIds)];
     const contacts = await prisma.contact.findMany({
       where: { userId, id: { in: ids } },
-      select: { id: true, name: true, fullName: true, brandName: true, companyName: true, email: true, status: true },
+      select: { id: true, name: true, fullName: true, brandName: true, companyName: true, email: true, status: true, notes: true },
     });
     const excluded = contacts.filter((item) => item.status === "DO_NOT_CONTACT" || item.status === "INVALID");
     const allowed = contacts.filter((item) => item.status !== "DO_NOT_CONTACT" && item.status !== "INVALID");
@@ -42,6 +43,7 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
             snapshotName: contact.fullName ?? contact.name,
             snapshotBrand: contact.brandName ?? contact.companyName,
             snapshotEmail: contact.email,
+            productCategory: contact.notes || "General",
           })),
           skipDuplicates: true,
         });
@@ -119,22 +121,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       asin: string | null;
     }[] = [];
 
-    for (const raw of items) {
-      const email = String(raw.email || "").trim().toLowerCase();
-      if (!email || !emailRegex.test(email)) continue;
-
-      const brandName = String(raw.brandName || "").trim() || email.split("@")[0];
-      const productCategory = String(raw.productCategory || "General").trim();
-      const asin = String(raw.asin || "").trim() || null;
-      const amazonLink = String(raw.amazonLink || "").trim();
-      const website = String(raw.website || amazonLink || "").trim() || null;
+    for (let idx = 0; idx < items.length; idx++) {
+      const raw = items[idx];
+      const extracted = extractRowData(raw, idx + 1);
+      if (!extracted.isValidEmail) continue;
 
       validItems.push({
-        email,
-        brandName,
-        productCategory,
-        website,
-        asin,
+        email: extracted.brandEmail,
+        brandName: extracted.brandName,
+        productCategory: extracted.productCategory,
+        website: extracted.website || null,
+        asin: extracted.asin || null,
       });
     }
 

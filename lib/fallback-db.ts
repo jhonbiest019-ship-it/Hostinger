@@ -201,8 +201,24 @@ function resolveRelation(item: any, relationField: string, modelName?: string): 
   if (relationField === "campaign" && item.campaignId) {
     return (store.campaign || []).find((c) => c.id === item.campaignId) || null;
   }
+  if (relationField === "campaignRecipient" && item.campaignRecipientId) {
+    const cr = (store.campaignRecipient || []).find((r) => r.id === item.campaignRecipientId);
+    if (cr && !cr.contact && cr.contactId) {
+      cr.contact = (store.contact || []).find((c) => c.id === cr.contactId) || null;
+    }
+    return cr || null;
+  }
+  if (relationField === "followUpRule" && item.followUpRuleId) {
+    return (store.followUpRule || []).find((f) => f.id === item.followUpRuleId) || null;
+  }
   if (relationField === "recipients" && item.id) {
     return (store.campaignRecipient || []).filter((r) => r.campaignId === item.id);
+  }
+  if (relationField === "scheduledJobs" && item.id) {
+    return (store.scheduledJob || []).filter((j) => j.campaignId === item.id);
+  }
+  if (relationField === "messages" && item.id) {
+    return (store.emailMessage || []).filter((m) => m.campaignId === item.id);
   }
   return null;
 }

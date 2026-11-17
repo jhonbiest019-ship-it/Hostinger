@@ -1,3 +1,5 @@
+import { inferBrandName } from "@/lib/sheet-detect";
+
 export const TEMPLATE_VARIABLES = [
   "brandName",
   "productCategory",
@@ -54,7 +56,7 @@ export function renderTemplate(value: string, contact: TemplateContact) {
   if (!value) return "";
   if (!contact) return resolveSpintax(value);
 
-  const brand = String(
+  const rawCandidateBrand = String(
     contact.brandName ||
     contact.snapshotBrand ||
     contact.companyName ||
@@ -62,51 +64,144 @@ export function renderTemplate(value: string, contact: TemplateContact) {
     ""
   ).trim();
 
-  // If a template has "Dear Team," or "Hi Team," without {{brandName}}, auto-insert brand from sheet detail
-  let prepared = value;
-  if (brand) {
-    prepared = prepared
-      .replace(/\b(Dear|Hi|Hello|Hey)\s+Team\b/gi, (_, prefix: string) => `${prefix} ${brand} Team`)
-      .replace(/^Team,/gim, `${brand} Team,`)
-      .replace(/\[\s*brand\s*name\s*\]/gi, brand);
+  const email = String(contact.email || contact.snapshotEmail || contact.brandEmail || "").trim();
+  const website = String(contact.website || contact.amazonLink || "").trim();
+
+  // Guarantees clean Brand Name is always resolved (with smart fallback if missing)
+  const brand = inferBrandName(rawCandidateBrand, email, website);
+
+  // Guarantees clean Category is resolved
+  let cat = String(contact.productCategory || contact.category || "").trim();
+  if ((!cat || cat.toLowerCase() === "general") && contact.notes && typeof contact.notes === "string" && contact.notes.trim()) {
+    cat = contact.notes.trim();
   }
-  const cat = String(contact.productCategory || contact.category || contact.notes || "").trim();
-  if (cat) {
-    prepared = prepared.replace(/\[\s*category\s*name\s*\]/gi, cat);
+  if (!cat || cat.toLowerCase() === "missing category") {
+    cat = "Products";
   }
 
+  const asin = String(contact.asin || contact.formUrl || "").trim();
+  const amazonLink = String(contact.amazonLink || contact.website || "").trim();
+  const sheetNum = String(contact.sheetNum || contact.num || contact.index || "").trim();
+
+  let prepared = value;
+
+  // 1. Auto-format greeting to always include the detected brand name
+  if (brand) {
+    prepared = prepared
+      .replace(/\b(Dear|Hi|Hello|Hey)\s+(?:Team|Brand|Partner)\b/gi, (_, prefix: string) => `${prefix} ${brand} Team`)
+      .replace(/\b(Dear|Hi|Hello|Hey)\s+\[\s*brand(?:\s*name)?\s*\]\s*(?:Team)?\b/gi, (_, prefix: string) => `${prefix} ${brand} Team`)
+      .replace(/\b(Dear|Hi|Hello|Hey)\s+\{\{\s*brand(?:\s*name)?\s*\}\}\s*(?:Team)?\b/gi, (_, prefix: string) => `${prefix} ${brand} Team`)
+      .replace(/^Team,/gim, `${brand} Team,`);
+  }
+
+  // 2. Comprehensive Bracket Replacement: [Brand Name], [Category], [Email], [ASIN], etc.
+  prepared = prepared
+    .replace(/\[\s*(?:brand(?:\s*name)?|company(?:\s*name)?|store(?:\s*name)?)\s*\]/gi, brand)
+    .replace(/\[\s*(?:(?:product\s*)?category(?:\s*name)?|niche|industry)\s*\]/gi, cat)
+    .replace(/\[\s*(?:(?:brand\s*)?email(?:\s*address)?)\s*\]/gi, email)
+    .replace(/\[\s*(?:asin|product\s*id)\s*\]/gi, asin)
+    .replace(/\[\s*(?:amazon(?:\s*link)?|listing(?:\s*url)?)\s*\]/gi, amazonLink)
+    .replace(/\[\s*(?:website|url|domain)\s*\]/gi, website || amazonLink)
+    .replace(/\[\s*(?:num|sheet\s*num|#|sr(?:\s*no)?)\s*\]/gi, sheetNum);
+
+  // 3. Double Curly Braces Replacement: {{ brandName }}, {{ productCategory }}, etc.
   const rendered = prepared.replace(/{{\s*([^}]+)\s*}}/g, (_, rawVariable: string) => {
     const raw = rawVariable.trim();
-    // 1. Direct key match
-    if (contact[raw] !== undefined && contact[raw] !== null) {
+
+    // Direct key match on contact
+    if (contact[raw] !== undefined && contact[raw] !== null && String(contact[raw]).trim() !== "") {
       return String(contact[raw]);
     }
-    // 2. Normalized key match (lowercase, stripped spaces/underscores)
+
+    // Direct key match on raw sheet row data if present
+    if (contact.raw && typeof contact.raw === "object" && contact.raw[raw] !== undefined && contact.raw[raw] !== null) {
+      return String(contact.raw[raw]);
+    }
+
+    // Normalized key match (lowercase, stripped spaces/underscores)
     const norm = raw.toLowerCase().replace(/[\s_-]+/g, "");
+
     for (const [k, v] of Object.entries(contact)) {
       if (v !== null && v !== undefined && k.toLowerCase().replace(/[\s_-]+/g, "") === norm) {
         return String(v);
       }
     }
-    // 3. Common domain aliases for Outreach
-    if (norm === "brand" || norm === "brandname" || norm === "snapshotbrand") {
-      return String(contact.brandName || contact.snapshotBrand || contact.companyName || contact.name || "");
+
+    if (contact.raw && typeof contact.raw === "object") {
+      for (const [k, v] of Object.entries(contact.raw)) {
+        if (v !== null && v !== undefined && k.toLowerCase().replace(/[\s_-]+/g, "") === norm) {
+          return String(v);
+        }
+      }
     }
-    if (norm === "category" || norm === "productcategory" || norm === "product") {
-      return String(contact.productCategory || contact.category || contact.notes || "");
+
+    // Common Outreach domain aliases
+    if (
+      norm === "brand" ||
+      norm === "brandname" ||
+      norm === "snapshotbrand" ||
+      norm === "company" ||
+      norm === "companyname" ||
+      norm === "store" ||
+      norm === "storename" ||
+      norm === "vendor" ||
+      norm === "merchant"
+    ) {
+      return brand;
     }
-    if (norm === "email" || norm === "brandemail" || norm === "snapshotemail") {
-      return String(contact.email || contact.snapshotEmail || "");
+
+    if (
+      norm === "category" ||
+      norm === "productcategory" ||
+      norm === "categoryname" ||
+      norm === "niche" ||
+      norm === "industry" ||
+      norm === "sector" ||
+      norm === "product"
+    ) {
+      return cat;
     }
-    if (norm === "asin" || norm === "productid") {
-      return String(contact.asin || contact.formUrl || "");
+
+    if (
+      norm === "email" ||
+      norm === "brandemail" ||
+      norm === "snapshotemail" ||
+      norm === "contactemail" ||
+      norm === "mail"
+    ) {
+      return email;
     }
-    if (norm === "amazonlink" || norm === "amzlink" || norm === "amz" || norm === "listinglink") {
-      return String(contact.amazonLink || contact.website || "");
+
+    if (norm === "asin" || norm === "productid" || norm === "sku") {
+      return asin;
     }
-    if (norm === "num" || norm === "sheetnum" || norm === "number") {
-      return String(contact.sheetNum || contact.num || contact.index || "");
+
+    if (
+      norm === "amazonlink" ||
+      norm === "amzlink" ||
+      norm === "amz" ||
+      norm === "listinglink" ||
+      norm === "productlink"
+    ) {
+      return amazonLink;
     }
+
+    if (norm === "website" || norm === "domain" || norm === "url" || norm === "site") {
+      return website || amazonLink;
+    }
+
+    if (
+      norm === "num" ||
+      norm === "sheetnum" ||
+      norm === "number" ||
+      norm === "sr" ||
+      norm === "srno" ||
+      norm === "index"
+    ) {
+      return sheetNum;
+    }
+
+    // Unknown variable: clean fallback
     return "";
   });
 
