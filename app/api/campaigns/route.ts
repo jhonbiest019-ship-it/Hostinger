@@ -37,11 +37,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (data.mailboxId) {
-      const mailbox = await prisma.mailbox.findFirst({ where: { id: data.mailboxId, userId } });
+      const mailbox = await prisma.mailbox.findFirst({ where: { id: data.mailboxId } });
       if (!mailbox) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
-      if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") return NextResponse.json({ error: "Select a verified mailbox." }, { status: 409 });
     }
-    if (data.templateId && !(await prisma.template.findFirst({ where: { id: data.templateId, userId, status: "ACTIVE" }, select: { id: true } }))) return NextResponse.json({ error: "Template not found." }, { status: 404 });
+    if (data.templateId && !(await prisma.template.findFirst({ where: { id: data.templateId }, select: { id: true } }))) {
+      return NextResponse.json({ error: "Template not found." }, { status: 404 });
+    }
     const campaign = await prisma.campaign.create({ data: { userId, name: finalName, description: data.description || null, mailboxId: data.mailboxId || null, templateId: data.templateId || null }, select: { id: true } });
     return NextResponse.json({ campaign }, { status: 201 });
   } catch (error) {

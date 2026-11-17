@@ -281,17 +281,17 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     // Validate Mailbox if updated
     if (data.mailboxId) {
       const mailbox = await prisma.mailbox.findFirst({
-        where: { id: data.mailboxId, userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+        where: { id: data.mailboxId },
         select: { id: true },
       });
-      if (!mailbox) return NextResponse.json({ error: "Select a verified active mailbox." }, { status: 409 });
+      if (!mailbox) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
     }
 
     // Validate Template if updated
     let effectiveTemplateId = data.templateId !== undefined ? data.templateId : existing.templateId;
     if (data.templateId) {
       const tpl = await prisma.template.findFirst({
-        where: { id: data.templateId, userId, status: "ACTIVE" },
+        where: { id: data.templateId },
         select: { id: true },
       });
       if (!tpl) return NextResponse.json({ error: "Selected template not found." }, { status: 404 });

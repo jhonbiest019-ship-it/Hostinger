@@ -1053,7 +1053,10 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
       const res = await fetch("/api/campaigns/sheet-send", {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(mailboxId ? { "x-active-mailbox-id": mailboxId } : {}),
+        },
         body: JSON.stringify({
           campaignName: finalCampaignName,
           mailboxId: mailboxId || undefined,
@@ -1194,7 +1197,10 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
       const res = await fetch("/api/campaigns/sheet-send", {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(mailboxId ? { "x-active-mailbox-id": mailboxId } : {}),
+        },
         body: JSON.stringify({
           campaignName: finalCampaignName,
           mailboxId,

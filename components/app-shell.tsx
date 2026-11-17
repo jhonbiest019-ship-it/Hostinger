@@ -790,7 +790,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/email/send", {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-active-mailbox-id": targetMailboxId,
+        },
         body: JSON.stringify({
           mailboxId: targetMailboxId,
           recipient: composeTo.trim(),

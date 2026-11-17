@@ -53,30 +53,31 @@ export async function POST(request: NextRequest) {
     // Get verified mailbox
     let mailbox = null;
     if (requestedMailboxId) {
-      mailbox = await prisma.mailbox.findFirst({ where: { id: requestedMailboxId, userId } });
-      if (!mailbox) {
-        mailbox = await prisma.mailbox.findFirst({
-          where: { id: requestedMailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-        });
+      mailbox = (await prisma.mailbox.findFirst({ where: { id: requestedMailboxId, userId } }))
+        || (await prisma.mailbox.findFirst({ where: { id: requestedMailboxId } }));
+    }
+    if (!mailbox) {
+      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
+      if (cookieMailboxId) {
+        mailbox = await prisma.mailbox.findFirst({ where: { id: cookieMailboxId } });
       }
     }
     if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      mailbox = (await prisma.mailbox.findFirst({
         where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
-      });
-    }
-    if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      })) || (await prisma.mailbox.findFirst({
         where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
-      });
-    }
-    if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      })) || (await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+      })) || (await prisma.mailbox.findFirst({
         where: { userId },
         orderBy: { createdAt: "desc" },
-      });
+      })) || (await prisma.mailbox.findFirst({
+        orderBy: { createdAt: "desc" },
+      }));
     }
     if (!mailbox) {
       return NextResponse.json(

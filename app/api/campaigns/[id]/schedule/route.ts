@@ -66,24 +66,22 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       let mailbox = campaign.mailbox;
       const targetMailboxId = parsed.data.mailboxId || campaign.mailboxId;
       if (targetMailboxId && (!mailbox || mailbox.id !== targetMailboxId)) {
-        mailbox = await tx.mailbox.findFirst({ where: { id: targetMailboxId, userId } });
+        mailbox = (await tx.mailbox.findFirst({ where: { id: targetMailboxId, userId } }))
+          || (await tx.mailbox.findFirst({ where: { id: targetMailboxId } }));
         if (mailbox) {
           await tx.campaign.update({ where: { id }, data: { mailboxId: mailbox.id } });
         }
       }
       if (!mailbox) {
         mailbox = (await tx.mailbox.findFirst({ where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" }, orderBy: { updatedAt: "desc" } }))
-          || (await tx.mailbox.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }));
+          || (await tx.mailbox.findFirst({ where: { status: "ACTIVE", smtpStatus: "CONNECTED" }, orderBy: { updatedAt: "desc" } }))
+          || (await tx.mailbox.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }))
+          || (await tx.mailbox.findFirst({ where: { status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }));
         if (mailbox) {
           await tx.campaign.update({ where: { id }, data: { mailboxId: mailbox.id } });
         }
       }
-      if (
-        !mailbox ||
-        mailbox.userId !== userId ||
-        mailbox.status !== "ACTIVE" ||
-        mailbox.smtpStatus !== "CONNECTED"
-      ) {
+      if (!mailbox || !mailbox.encryptedCredentials) {
         throw new SchedulingError("Verify the selected Hostinger sender mailbox before scheduling.");
       }
 
@@ -91,19 +89,22 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       let template = campaign.template;
       const targetTemplateId = parsed.data.templateId || campaign.templateId;
       if (targetTemplateId && (!template || template.id !== targetTemplateId)) {
-        template = await tx.template.findFirst({ where: { id: targetTemplateId, userId } });
+        template = (await tx.template.findFirst({ where: { id: targetTemplateId, userId } }))
+          || (await tx.template.findFirst({ where: { id: targetTemplateId } }));
         if (template) {
           await tx.campaign.update({ where: { id }, data: { templateId: template.id } });
         }
       }
       if (!template) {
         template = (await tx.template.findFirst({ where: { userId, status: "ACTIVE", isDefault: true } }))
-          || (await tx.template.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }));
+          || (await tx.template.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }))
+          || (await tx.template.findFirst({ where: { status: "ACTIVE", isDefault: true } }))
+          || (await tx.template.findFirst({ where: { status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }));
         if (template) {
           await tx.campaign.update({ where: { id }, data: { templateId: template.id } });
         }
       }
-      if (!template || template.userId !== userId || template.status !== "ACTIVE") {
+      if (!template || template.status !== "ACTIVE") {
         throw new SchedulingError("Select an active template.");
       }
 

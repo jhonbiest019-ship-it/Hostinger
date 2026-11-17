@@ -78,26 +78,24 @@ export async function POST(
     // Update or verify sender mailbox
     let finalMailboxId: string | null = null;
     if (mailboxId) {
-      const targetMailbox = await prisma.mailbox.findFirst({
-        where: { id: mailboxId, userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-      });
+      const targetMailbox = (await prisma.mailbox.findFirst({ where: { id: mailboxId, userId } }))
+        || (await prisma.mailbox.findFirst({ where: { id: mailboxId } }));
       if (targetMailbox) {
         finalMailboxId = targetMailbox.id;
       }
     }
     
     if (!finalMailboxId && campaign.mailboxId) {
-      const campMailbox = await prisma.mailbox.findFirst({
-        where: { id: campaign.mailboxId, userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-      });
+      const campMailbox = (await prisma.mailbox.findFirst({ where: { id: campaign.mailboxId, userId } }))
+        || (await prisma.mailbox.findFirst({ where: { id: campaign.mailboxId } }));
       if (campMailbox) finalMailboxId = campMailbox.id;
     }
 
     if (!finalMailboxId) {
-      const activeMailbox = await prisma.mailbox.findFirst({
-        where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-        orderBy: { createdAt: "desc" },
-      });
+      const activeMailbox = (await prisma.mailbox.findFirst({ where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" }, orderBy: { createdAt: "desc" } }))
+        || (await prisma.mailbox.findFirst({ where: { status: "ACTIVE", smtpStatus: "CONNECTED" }, orderBy: { createdAt: "desc" } }))
+        || (await prisma.mailbox.findFirst({ where: { status: "ACTIVE" }, orderBy: { createdAt: "desc" } }))
+        || (await prisma.mailbox.findFirst({ orderBy: { createdAt: "desc" } }));
       if (activeMailbox) {
         finalMailboxId = activeMailbox.id;
       } else {

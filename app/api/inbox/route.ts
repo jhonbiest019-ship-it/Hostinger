@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     // Resilient mailbox resolution: check requested ID, cookie, user mailbox, or active ERP mailbox
     let mailbox = (mailboxId && mailboxId !== "undefined" && mailboxId !== "null")
       ? await prisma.mailbox.findFirst({
-          where: { id: mailboxId, userId },
+          where: { id: mailboxId },
           select: {
             id: true,
             emailAddress: true,
@@ -23,24 +23,11 @@ export async function GET(request: NextRequest) {
         })
       : null;
 
-    if (!mailbox && mailboxId && mailboxId !== "undefined" && mailboxId !== "null") {
-      mailbox = await prisma.mailbox.findFirst({
-        where: { id: mailboxId, status: "ACTIVE" },
-        select: {
-          id: true,
-          emailAddress: true,
-          displayName: true,
-          status: true,
-          smtpStatus: true,
-        },
-      });
-    }
-
     if (!mailbox) {
       const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
       if (cookieMailboxId) {
         mailbox = await prisma.mailbox.findFirst({
-          where: { id: cookieMailboxId, status: "ACTIVE" },
+          where: { id: cookieMailboxId },
           select: {
             id: true,
             emailAddress: true,
@@ -75,6 +62,15 @@ export async function GET(request: NextRequest) {
         },
       }) || await prisma.mailbox.findFirst({
         where: { userId },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          emailAddress: true,
+          displayName: true,
+          status: true,
+          smtpStatus: true,
+        },
+      }) || await prisma.mailbox.findFirst({
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -259,7 +255,7 @@ export async function POST(request: NextRequest) {
 
     if (!mailbox && mailboxId && mailboxId !== "undefined" && mailboxId !== "null") {
       mailbox = await prisma.mailbox.findFirst({
-        where: { id: mailboxId, status: "ACTIVE" },
+        where: { id: mailboxId },
         select: { id: true, emailAddress: true },
       });
     }
@@ -268,7 +264,7 @@ export async function POST(request: NextRequest) {
       const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
       if (cookieMailboxId) {
         mailbox = await prisma.mailbox.findFirst({
-          where: { id: cookieMailboxId, status: "ACTIVE" },
+          where: { id: cookieMailboxId },
           select: { id: true, emailAddress: true },
         });
       }
@@ -284,7 +280,14 @@ export async function POST(request: NextRequest) {
         orderBy: { updatedAt: "desc" },
         select: { id: true, emailAddress: true },
       }) || await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, emailAddress: true },
+      }) || await prisma.mailbox.findFirst({
         where: { userId },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, emailAddress: true },
+      }) || await prisma.mailbox.findFirst({
         orderBy: { updatedAt: "desc" },
         select: { id: true, emailAddress: true },
       });

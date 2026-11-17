@@ -4,6 +4,8 @@ import { requireUser, safeErrorMessage } from "@/lib/auth";
 import { encryptedPassword, testMailboxConnections } from "@/lib/email/mailbox-service";
 import { mailboxSchema } from "@/lib/validation";
 import { MailboxStatus, ConnectionStatus } from "@prisma/client";
+import { attachVaultToResponse } from "@/lib/vault";
+import { exportStoreToVault } from "@/lib/fallback-db";
 
 function publicMailbox(mailbox: {
   id: string;
@@ -64,13 +66,11 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // 2. Also include all active & connected Hostinger mailboxes in this ERP system
-    // so any account logged into this ERP has real-time access to verified active senders!
+    // 2. Also include all other mailboxes connected in this ERP system
+    // so all accounts (up to 15 users) have real-time access to verified active senders!
     const ownIds = ownMailboxes.map((m) => m.id);
     const sharedMailboxes = await prisma.mailbox.findMany({
       where: {
-        status: "ACTIVE",
-        smtpStatus: "CONNECTED",
         ...(ownIds.length > 0 ? { id: { notIn: ownIds } } : {}),
       },
       orderBy: { updatedAt: "desc" },
@@ -98,7 +98,9 @@ export async function GET(request: NextRequest) {
     });
 
     const allMailboxes = [...ownMailboxes, ...sharedMailboxes];
-    return NextResponse.json({ mailboxes: allMailboxes.map((m) => publicMailbox(m, userId)) });
+    const response = NextResponse.json({ mailboxes: allMailboxes.map((m) => publicMailbox(m, userId)) });
+    attachVaultToResponse(response, exportStoreToVault());
+    return response;
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("GET /api/mailboxes error:", error);
@@ -152,9 +154,17 @@ export async function POST(request: NextRequest) {
           initialSmtpStatus = "CONNECTED";
           initialImapStatus = "CONNECTED";
           initialLastSuccessfulAt = now;
+        } else if (testResult.smtp) {
+          // SMTP is verified and ready for real-time outreach!
+          initialStatus = "ACTIVE";
+          initialSmtpStatus = "CONNECTED";
+          initialImapStatus = "FAILED";
+          initialLastSuccessfulAt = now;
+          const imapErr = testResult.imapError ? (testResult.imapError instanceof Error ? testResult.imapError.message : String(testResult.imapError)) : "";
+          initialLastError = `SMTP Connected. IMAP notice: ${imapErr || "Check incoming settings"}`;
         } else {
           initialStatus = "ERROR";
-          initialSmtpStatus = testResult.smtp ? "CONNECTED" : "FAILED";
+          initialSmtpStatus = "FAILED";
           initialImapStatus = testResult.imap ? "CONNECTED" : "FAILED";
           const smtpErr = testResult.smtpError ? (testResult.smtpError instanceof Error ? testResult.smtpError.message : String(testResult.smtpError)) : "";
           const imapErr = testResult.imapError ? (testResult.imapError instanceof Error ? testResult.imapError.message : String(testResult.imapError)) : "";
@@ -216,19 +226,19 @@ export async function POST(request: NextRequest) {
     });
 
     const response = NextResponse.json({
-      mailbox: publicMailbox(mailbox),
+      mailbox: publicMailbox(mailbox, userId),
       connectionStatus: initialStatus,
       lastError: initialLastError,
     }, { status: 201 });
 
-    if (initialStatus === "ACTIVE") {
-      response.cookies.set("active_mailbox_id", mailbox.id, {
-        path: "/",
-        sameSite: "lax",
-        httpOnly: false,
-        maxAge: 60 * 60 * 24 * 365,
-      });
-    }
+    response.cookies.set("active_mailbox_id", mailbox.id, {
+      path: "/",
+      sameSite: "lax",
+      httpOnly: false,
+      maxAge: 60 * 60 * 24 * 365,
+    });
+
+    attachVaultToResponse(response, exportStoreToVault(mailbox.id));
 
     return response;
   } catch (error) {

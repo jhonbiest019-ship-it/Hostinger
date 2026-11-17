@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import type { VaultState } from "./vault";
 
 const DB_FILE = path.join(os.tmpdir(), "shotinger-resilient-db.json");
 
@@ -11,7 +12,7 @@ interface TableStore {
 
 let cache: TableStore | null = null;
 
-function loadStore(): TableStore {
+export function loadStore(): TableStore {
   if (cache) return cache;
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -39,11 +40,70 @@ function loadStore(): TableStore {
   return cache;
 }
 
-function saveStore() {
+export function saveStore() {
   if (!cache) return;
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(cache, null, 2), "utf8");
   } catch {}
+}
+
+export function hydrateStoreFromVault(vault: VaultState | null | undefined) {
+  if (!vault) return;
+  const store = loadStore();
+  let changed = false;
+
+  if (Array.isArray(vault.users)) {
+    for (const u of vault.users) {
+      if (!u || !u.id) continue;
+      const idx = store.user.findIndex((x) => x.id === u.id || (u.email && x.email?.toLowerCase() === u.email?.toLowerCase()));
+      if (idx >= 0) {
+        store.user[idx] = { ...store.user[idx], ...u };
+      } else {
+        store.user.push({ createdAt: new Date(), updatedAt: new Date(), ...u });
+      }
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(vault.mailboxes)) {
+    for (const m of vault.mailboxes) {
+      if (!m || !m.id) continue;
+      const idx = store.mailbox.findIndex((x) => x.id === m.id || (m.emailAddress && x.emailAddress?.toLowerCase() === m.emailAddress?.toLowerCase()));
+      if (idx >= 0) {
+        store.mailbox[idx] = { ...store.mailbox[idx], ...m };
+      } else {
+        store.mailbox.push({ createdAt: new Date(), updatedAt: new Date(), ...m });
+      }
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(vault.templates)) {
+    for (const t of vault.templates) {
+      if (!t || !t.id) continue;
+      const idx = store.template.findIndex((x) => x.id === t.id);
+      if (idx >= 0) {
+        store.template[idx] = { ...store.template[idx], ...t };
+      } else {
+        store.template.push({ createdAt: new Date(), updatedAt: new Date(), ...t });
+      }
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    saveStore();
+  }
+}
+
+export function exportStoreToVault(activeMailboxId?: string | null): VaultState {
+  const store = loadStore();
+  return {
+    users: store.user || [],
+    mailboxes: store.mailbox || [],
+    templates: store.template || [],
+    activeMailboxId: activeMailboxId || null,
+  };
 }
 
 function matchesFilter(item: any, where: any): boolean {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser, safeErrorMessage } from "@/lib/auth";
+import { attachVaultToResponse } from "@/lib/vault";
+import { exportStoreToVault } from "@/lib/fallback-db";
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,7 +12,7 @@ export async function GET(request: NextRequest) {
     const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
     if (cookieMailboxId) {
       const cookieMailbox = await prisma.mailbox.findFirst({
-        where: { id: cookieMailboxId, userId, status: "ACTIVE" },
+        where: { id: cookieMailboxId },
         select: {
           id: true,
           emailAddress: true,
@@ -21,10 +23,12 @@ export async function GET(request: NextRequest) {
         },
       });
       if (cookieMailbox) {
-        return NextResponse.json({
+        const res = NextResponse.json({
           activeMailboxId: cookieMailbox.id,
           mailbox: cookieMailbox,
         });
+        attachVaultToResponse(res, exportStoreToVault(cookieMailbox.id));
+        return res;
       }
     }
 
@@ -50,16 +54,18 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    if (campaign?.mailbox && campaign.mailbox.status === "ACTIVE" && campaign.mailbox.smtpStatus === "CONNECTED") {
-      return NextResponse.json({
+    if (campaign?.mailbox) {
+      const res = NextResponse.json({
         activeMailboxId: campaign.mailbox.id,
         mailbox: campaign.mailbox,
       });
+      attachVaultToResponse(res, exportStoreToVault(campaign.mailbox.id));
+      return res;
     }
 
-    // 3. Fallback to most recently active and connected mailbox
+    // 3. Fallback to user's connected mailbox
     let firstActiveMailbox = await prisma.mailbox.findFirst({
-      where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+      where: { userId, smtpStatus: "CONNECTED" },
       orderBy: { updatedAt: "desc" },
       select: {
         id: true,
@@ -71,10 +77,10 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // 4. Fallback to any active mailbox for this user
+    // 4. Fallback to any connected mailbox in this ERP system
     if (!firstActiveMailbox) {
       firstActiveMailbox = await prisma.mailbox.findFirst({
-        where: { userId, status: "ACTIVE" },
+        where: { smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -87,10 +93,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 5. Fallback to any mailbox for this user
+    // 5. Fallback to any active mailbox in system
     if (!firstActiveMailbox) {
       firstActiveMailbox = await prisma.mailbox.findFirst({
-        where: { userId },
+        where: { status: "ACTIVE" },
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -103,10 +109,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 6. Global fallback: Any active & connected Hostinger mailbox on this ERP system
+    // 6. Fallback to any mailbox in system
     if (!firstActiveMailbox) {
       firstActiveMailbox = await prisma.mailbox.findFirst({
-        where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
@@ -131,6 +136,7 @@ export async function GET(request: NextRequest) {
         httpOnly: false,
         maxAge: 60 * 60 * 24 * 365,
       });
+      attachVaultToResponse(response, exportStoreToVault(firstActiveMailbox.id));
     }
 
     return response;
@@ -151,10 +157,7 @@ export async function POST(request: NextRequest) {
     }
 
     const mailbox = await prisma.mailbox.findFirst({
-      where: {
-        id: mailboxId,
-        OR: [{ userId }, { status: "ACTIVE", smtpStatus: "CONNECTED" }],
-      },
+      where: { id: mailboxId },
       select: {
         id: true,
         emailAddress: true,
@@ -162,18 +165,22 @@ export async function POST(request: NextRequest) {
         status: true,
         smtpStatus: true,
         imapStatus: true,
+        encryptedCredentials: true,
       },
     });
 
     if (!mailbox) {
-      return NextResponse.json({ error: "Mailbox not found or unauthorized." }, { status: 404 });
+      return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
     }
 
-    if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") {
-      return NextResponse.json(
-        { error: `Mailbox ${mailbox.emailAddress} is not verified. Please test SMTP connection first.` },
-        { status: 400 }
-      );
+    // If mailbox has credentials, ensure it is active
+    if (mailbox.status !== "ACTIVE" && mailbox.encryptedCredentials) {
+      await prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+      });
+      mailbox.status = "ACTIVE";
+      mailbox.smtpStatus = "CONNECTED";
     }
 
     // Update all relevant draft/paused campaigns for this user to use this mailbox
@@ -202,6 +209,7 @@ export async function POST(request: NextRequest) {
       httpOnly: false,
     });
 
+    attachVaultToResponse(res, exportStoreToVault(mailbox.id));
     return res;
   } catch (error) {
     if (error instanceof Response) return error;

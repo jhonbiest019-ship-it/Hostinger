@@ -10,6 +10,10 @@ import {
   sessionCookieOptions,
 } from "@/lib/auth";
 import { z } from "zod";
+import { attachVaultToResponse, extractVaultFromRequest } from "@/lib/vault";
+import { exportStoreToVault, hydrateStoreFromVault } from "@/lib/fallback-db";
+
+const MAX_ALLOWED_USERS = 15;
 
 const schema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -17,10 +21,35 @@ const schema = z.object({
   password: z.string().min(6).max(128),
 });
 
+export async function GET(request: NextRequest) {
+  try {
+    const vault = extractVaultFromRequest(request);
+    if (vault) hydrateStoreFromVault(vault);
+
+    const registeredUserCount = await prisma.user.count({
+      where: {
+        email: { not: { contains: "queue-safety-" } },
+      },
+    });
+
+    return NextResponse.json({
+      maxUsers: MAX_ALLOWED_USERS,
+      currentUsers: registeredUserCount,
+      remainingSeats: Math.max(0, MAX_ALLOWED_USERS - registeredUserCount),
+      signupAllowed: registeredUserCount < MAX_ALLOWED_USERS,
+    });
+  } catch (error) {
+    return NextResponse.json({ maxUsers: MAX_ALLOWED_USERS, signupAllowed: true }, { status: 200 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
+    const vault = extractVaultFromRequest(request);
+    if (vault) hydrateStoreFromVault(vault);
+
     const ip = getClientIp(request);
-    const rateCheck = checkRateLimit(`signup:${ip}`, 10, 60 * 60 * 1000);
+    const rateCheck = checkRateLimit(`signup:${ip}`, 15, 60 * 60 * 1000);
     if (!rateCheck.allowed) {
       await logSecurityEvent("SIGNUP_RATE_LIMITED", null, { ip }, request);
       return NextResponse.json(
@@ -35,6 +64,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Enter a name, valid email, and password of at least 6 characters." },
         { status: 400 }
+      );
+    }
+
+    // Enforce 15-User Maximum Limit
+    const registeredUserCount = await prisma.user.count({
+      where: {
+        email: { not: { contains: "queue-safety-" } },
+      },
+    });
+
+    if (registeredUserCount >= MAX_ALLOWED_USERS) {
+      return NextResponse.json(
+        {
+          error: `User signup limit reached (maximum ${MAX_ALLOWED_USERS} accounts allowed). Please contact the administrator.`,
+          currentUsers: registeredUserCount,
+          maxUsers: MAX_ALLOWED_USERS,
+        },
+        { status: 403 }
       );
     }
 
@@ -79,8 +126,18 @@ export async function POST(request: NextRequest) {
 
     await logSecurityEvent("SIGNUP_SUCCESS", user.id, { email, name: user.name }, request);
 
-    const response = NextResponse.json({ user }, { status: 201 });
+    const response = NextResponse.json({
+      user,
+      capacity: {
+        currentUsers: registeredUserCount + 1,
+        maxUsers: MAX_ALLOWED_USERS,
+        remainingSeats: Math.max(0, MAX_ALLOWED_USERS - (registeredUserCount + 1)),
+      },
+    }, { status: 201 });
+
     response.cookies.set("outreach_session", createSessionToken(user.id, user.tokenVersion), sessionCookieOptions());
+    attachVaultToResponse(response, exportStoreToVault());
+
     return response;
   } catch (error) {
     console.error("Signup error:", error);

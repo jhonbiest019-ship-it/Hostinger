@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { extractVaultFromRequest } from "./vault";
+import { hydrateStoreFromVault } from "./fallback-db";
 
 function sessionSecret() {
   const value = process.env.AUTH_SESSION_SECRET || "shotinger-session-secret-fallback-key-2026";
@@ -154,6 +156,14 @@ export async function getAuthenticatedUserId(token: string | undefined) {
 }
 
 export async function requireUser(request: NextRequest) {
+  // Hydrate fallback store from request vault if present (ensures zero data loss across cloud lambdas)
+  try {
+    const vault = extractVaultFromRequest(request);
+    if (vault) {
+      hydrateStoreFromVault(vault);
+    }
+  } catch {}
+
   const token = request.cookies.get("outreach_session")?.value;
   const userId = await getAuthenticatedUserId(token);
   if (!userId) throw new Response(JSON.stringify({ error: "Authentication required." }), { status: 401, headers: { "content-type": "application/json" } });

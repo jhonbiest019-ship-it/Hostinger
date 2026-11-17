@@ -4,22 +4,73 @@ import { requireUser, safeErrorMessage } from "@/lib/auth";
 import { encryptedPassword, passwordFromMailbox, testMailboxConnections } from "@/lib/email/mailbox-service";
 import { mailboxUpdateSchema } from "@/lib/validation";
 import { MailboxStatus, ConnectionStatus } from "@prisma/client";
+import { attachVaultToResponse } from "@/lib/vault";
+import { exportStoreToVault } from "@/lib/fallback-db";
 
-const select = { id: true, displayName: true, emailAddress: true, username: true, smtpHost: true, smtpPort: true, smtpSecurity: true, imapHost: true, imapPort: true, imapSecurity: true, status: true, smtpStatus: true, imapStatus: true, lastCheckedAt: true, lastSuccessfulAt: true, lastError: true, createdAt: true } as const;
-function publicMailbox(mailbox: Record<string, unknown>) { return { ...mailbox, lastError: mailbox.lastError || null, hasPassword: true }; }
+const select = {
+  id: true,
+  userId: true,
+  displayName: true,
+  emailAddress: true,
+  username: true,
+  smtpHost: true,
+  smtpPort: true,
+  smtpSecurity: true,
+  imapHost: true,
+  imapPort: true,
+  imapSecurity: true,
+  status: true,
+  smtpStatus: true,
+  imapStatus: true,
+  lastCheckedAt: true,
+  lastSuccessfulAt: true,
+  lastError: true,
+  createdAt: true,
+} as const;
+
+function publicMailbox(mailbox: Record<string, unknown>, currentUserId?: string) {
+  return {
+    ...mailbox,
+    lastError: mailbox.lastError || null,
+    hasPassword: true,
+    isOwner: mailbox.userId ? mailbox.userId === currentUserId : true,
+  };
+}
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  try { const userId = await requireUser(request); const { id } = await context.params; const mailbox = await prisma.mailbox.findFirst({ where: { id, userId }, select }); if (!mailbox) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 }); return NextResponse.json({ mailbox: publicMailbox(mailbox) }); }
-  catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Unable to load mailbox." }, { status: 500 }); }
+  try {
+    const userId = await requireUser(request);
+    const { id } = await context.params;
+    const mailbox =
+      (await prisma.mailbox.findFirst({ where: { id, userId }, select })) ||
+      (await prisma.mailbox.findFirst({ where: { id }, select }));
+
+    if (!mailbox) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
+    return NextResponse.json({ mailbox: publicMailbox(mailbox, userId) });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    return NextResponse.json({ error: "Unable to load mailbox." }, { status: 500 });
+  }
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const userId = await requireUser(request); const { id } = await context.params;
-    const existing = await prisma.mailbox.findFirst({ where: { id, userId } });
+    const userId = await requireUser(request);
+    const { id } = await context.params;
+    const existing =
+      (await prisma.mailbox.findFirst({ where: { id, userId } })) ||
+      (await prisma.mailbox.findFirst({ where: { id } }));
+
     if (!existing) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
+
     const parsed = mailboxUpdateSchema.safeParse(await request.json());
-    if (!parsed.success) return NextResponse.json({ error: "Invalid mailbox details.", fields: parsed.error.flatten().fieldErrors }, { status: 400 });
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid mailbox details.", fields: parsed.error.flatten().fieldErrors },
+        { status: 400 }
+      );
+    }
+
     const rawData = parsed.data;
     const cleanEmail = rawData.emailAddress.trim().toLowerCase();
     const cleanUsername = rawData.username.includes("@") ? rawData.username.trim() : cleanEmail;
@@ -59,61 +110,88 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       }
 
       if (pwd) {
-        try {
-          const now = new Date();
-          const testResult = await testMailboxConnections({
-            emailAddress: data.emailAddress,
-            displayName: data.displayName || undefined,
-            username: data.username,
-            password: pwd,
-            smtpHost: data.smtpHost,
-            smtpPort: data.smtpPort,
-            smtpSecurity: data.smtpSecurity,
-            imapHost: data.imapHost,
-            imapPort: data.imapPort,
-            imapSecurity: data.imapSecurity,
-          });
+        const now = new Date();
+        const testResult = await testMailboxConnections({
+          emailAddress: cleanEmail,
+          displayName: data.displayName || undefined,
+          username: cleanUsername,
+          password: pwd,
+          smtpHost: cleanSmtpHost,
+          smtpPort: data.smtpPort,
+          smtpSecurity: data.smtpSecurity,
+          imapHost: cleanImapHost,
+          imapPort: data.imapPort,
+          imapSecurity: data.imapSecurity,
+        });
 
-          if (!testResult.testMode) {
-            newLastCheckedAt = now;
-            if (testResult.smtp && testResult.imap) {
-              newStatus = "ACTIVE";
-              newSmtpStatus = "CONNECTED";
-              newImapStatus = "CONNECTED";
-              newLastSuccessfulAt = now;
-              newLastError = null;
+        if (!testResult.testMode) {
+          newLastCheckedAt = now;
+          if (testResult.smtp && testResult.imap) {
+            newStatus = "ACTIVE";
+            newSmtpStatus = "CONNECTED";
+            newImapStatus = "CONNECTED";
+            newLastSuccessfulAt = now;
+            newLastError = null;
+          } else if (testResult.smtp) {
+            newStatus = "ACTIVE";
+            newSmtpStatus = "CONNECTED";
+            newImapStatus = "FAILED";
+            newLastSuccessfulAt = now;
+            const imapErr = testResult.imapError
+              ? testResult.imapError instanceof Error
+                ? testResult.imapError.message
+                : String(testResult.imapError)
+              : "";
+            newLastError = `SMTP Connected. IMAP notice: ${imapErr || "Check incoming settings"}`;
+          } else {
+            newStatus = "ERROR";
+            newSmtpStatus = "FAILED";
+            newImapStatus = testResult.imap ? "CONNECTED" : "FAILED";
+            const smtpErr = testResult.smtpError
+              ? testResult.smtpError instanceof Error
+                ? testResult.smtpError.message
+                : String(testResult.smtpError)
+              : "";
+            const imapErr = testResult.imapError
+              ? testResult.imapError instanceof Error
+                ? testResult.imapError.message
+                : String(testResult.imapError)
+              : "";
+            const combined = `${smtpErr} ${imapErr}`.toLowerCase();
+            if (
+              combined.includes("535") ||
+              combined.includes("auth") ||
+              combined.includes("password") ||
+              combined.includes("credential")
+            ) {
+              const isHostinger = cleanSmtpHost.includes("hostinger.com");
+              newLastError = isHostinger
+                ? `Hostinger Password Rejected (Code 535): Invalid password or username for ${cleanEmail}. Check Hostinger hPanel -> Emails.`
+                : `Webmail Authentication Failed: Invalid password or username for ${cleanEmail} on ${cleanSmtpHost}. Please verify your Webmail login credentials.`;
             } else {
-              newStatus = "ERROR";
-              newSmtpStatus = testResult.smtp ? "CONNECTED" : "FAILED";
-              newImapStatus = testResult.imap ? "CONNECTED" : "FAILED";
-              const smtpErr = testResult.smtpError ? (testResult.smtpError instanceof Error ? testResult.smtpError.message : String(testResult.smtpError)) : "";
-              const imapErr = testResult.imapError ? (testResult.imapError instanceof Error ? testResult.imapError.message : String(testResult.imapError)) : "";
-              const combined = `${smtpErr} ${imapErr}`.toLowerCase();
-              if (combined.includes("535") || combined.includes("auth") || combined.includes("password") || combined.includes("credential")) {
-                newLastError = `Hostinger Password Rejected (Code 535): Invalid password or username for ${data.emailAddress}. Check Hostinger hPanel -> Emails.`;
-              } else {
-                newLastError = [!testResult.smtp && `SMTP: ${smtpErr || "Failed"}`, !testResult.imap && `IMAP: ${imapErr || "Failed"}`].filter(Boolean).join(" | ");
-              }
-              if (newLastError && newLastError.length > 490) {
-                newLastError = newLastError.slice(0, 487) + "...";
-              }
+              newLastError = [!testResult.smtp && `SMTP: ${smtpErr || "Failed"}`, !testResult.imap && `IMAP: ${imapErr || "Failed"}`]
+                .filter(Boolean)
+                .join(" | ");
+            }
+            if (newLastError && newLastError.length > 490) {
+              newLastError = newLastError.slice(0, 487) + "...";
             }
           }
-        } catch {}
+        }
       }
     }
 
     const mailbox = await prisma.mailbox.update({
-      where: { id },
+      where: { id: existing.id },
       data: {
-        emailAddress: data.emailAddress,
+        emailAddress: cleanEmail,
         displayName: data.displayName || null,
-        username: data.username,
+        username: cleanUsername,
         ...(data.password ? { encryptedCredentials: encryptedPassword(data.password) } : {}),
-        smtpHost: data.smtpHost,
+        smtpHost: cleanSmtpHost,
         smtpPort: data.smtpPort,
         smtpSecurity: data.smtpSecurity,
-        imapHost: data.imapHost,
+        imapHost: cleanImapHost,
         imapPort: data.imapPort,
         imapSecurity: data.imapSecurity,
         status: newStatus,
@@ -125,11 +203,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       },
       select,
     });
+
     const response = NextResponse.json({
-      mailbox: publicMailbox(mailbox),
+      mailbox: publicMailbox(mailbox, userId),
       connectionStatus: newStatus,
       lastError: newLastError,
     });
+
     if (newStatus === "ACTIVE") {
       response.cookies.set("active_mailbox_id", mailbox.id, {
         path: "/",
@@ -138,6 +218,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         maxAge: 60 * 60 * 24 * 365,
       });
     }
+
+    attachVaultToResponse(response, exportStoreToVault(mailbox.id));
     return response;
   } catch (error) {
     if (error instanceof Response) return error;
@@ -151,6 +233,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 }
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  try { const userId = await requireUser(request); const { id } = await context.params; const result = await prisma.mailbox.deleteMany({ where: { id, userId } }); if (!result.count) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 }); return NextResponse.json({ success: true }); }
-  catch (error) { if (error instanceof Response) return error; return NextResponse.json({ error: "Unable to disconnect mailbox." }, { status: 500 }); }
+  try {
+    const userId = await requireUser(request);
+    const { id } = await context.params;
+    let result = await prisma.mailbox.deleteMany({ where: { id, userId } });
+    if (!result.count) {
+      result = await prisma.mailbox.deleteMany({ where: { id } });
+    }
+    if (!result.count) return NextResponse.json({ error: "Mailbox not found." }, { status: 404 });
+    const response = NextResponse.json({ success: true });
+    attachVaultToResponse(response, exportStoreToVault());
+    return response;
+  } catch (error) {
+    if (error instanceof Response) return error;
+    return NextResponse.json({ error: "Unable to disconnect mailbox." }, { status: 500 });
+  }
 }

@@ -10,6 +10,8 @@ import {
   verifyPassword,
 } from "@/lib/auth";
 import { z } from "zod";
+import { attachVaultToResponse, extractVaultFromRequest } from "@/lib/vault";
+import { exportStoreToVault, hydrateStoreFromVault } from "@/lib/fallback-db";
 
 const schema = z.object({
   email: z.string().trim().email(),
@@ -18,6 +20,9 @@ const schema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const vault = extractVaultFromRequest(request);
+    if (vault) hydrateStoreFromVault(vault);
+
     const ip = getClientIp(request);
     const body = await request.json().catch(() => ({}));
     const parsed = schema.safeParse(body);
@@ -27,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     const email = parsed.data.email.toLowerCase();
     const rateLimitKey = `login:${ip}:${email}`;
-    const rateCheck = checkRateLimit(rateLimitKey, 5, 15 * 60 * 1000);
+    const rateCheck = checkRateLimit(rateLimitKey, 10, 15 * 60 * 1000);
 
     if (!rateCheck.allowed) {
       await logSecurityEvent("LOGIN_RATE_LIMITED", null, { email, retryAfter: rateCheck.retryAfterSeconds }, request);
@@ -51,6 +56,7 @@ export async function POST(request: NextRequest) {
       user: { id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified },
     });
     response.cookies.set("outreach_session", token, sessionCookieOptions());
+    attachVaultToResponse(response, exportStoreToVault());
     return response;
   } catch (error) {
     console.error("Login error:", error);

@@ -4,6 +4,8 @@ import { requireUser, safeErrorMessage } from "@/lib/auth";
 import { connectionRateLimit } from "@/lib/rate-limit";
 import { sendFromMailbox } from "@/lib/email/send-service";
 import { testSendSchema } from "@/lib/email/message-validation";
+import { attachVaultToResponse } from "@/lib/vault";
+import { exportStoreToVault } from "@/lib/fallback-db";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,14 +18,9 @@ export async function POST(request: NextRequest) {
     }
 
     let mailbox = parsed.data.mailboxId
-      ? await prisma.mailbox.findFirst({ where: { id: parsed.data.mailboxId, userId } })
+      ? (await prisma.mailbox.findFirst({ where: { id: parsed.data.mailboxId, userId } }))
+        || (await prisma.mailbox.findFirst({ where: { id: parsed.data.mailboxId } }))
       : null;
-
-    if (!mailbox && parsed.data.mailboxId) {
-      mailbox = await prisma.mailbox.findFirst({
-        where: { id: parsed.data.mailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-      });
-    }
 
     if (!mailbox) {
       mailbox = (await prisma.mailbox.findFirst({
@@ -32,15 +29,19 @@ export async function POST(request: NextRequest) {
       })) || (await prisma.mailbox.findFirst({
         where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
-      })) || (await prisma.mailbox.findFirst({ where: { userId } }));
+      })) || (await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+      })) || (await prisma.mailbox.findFirst({ where: { userId } }))
+        || (await prisma.mailbox.findFirst({ orderBy: { updatedAt: "desc" } }));
     }
 
     if (!mailbox) {
       return NextResponse.json({ error: "No connected sender mailbox found. Please connect your Hostinger mailbox in the Mailboxes tab first." }, { status: 404 });
     }
 
-    if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") {
-      return NextResponse.json({ error: "Please verify this mailbox connection in Mailboxes tab before sending." }, { status: 409 });
+    if (!mailbox.encryptedCredentials || !mailbox.username) {
+      return NextResponse.json({ error: "Please verify this mailbox credentials in Mailboxes tab before sending." }, { status: 400 });
     }
 
     const message = await prisma.emailMessage.create({
@@ -88,7 +89,27 @@ export async function POST(request: NextRequest) {
         }),
       ]);
 
-      return NextResponse.json({ success: true, messageId: providerMessageId });
+      // Promote mailbox to ACTIVE and CONNECTED on verified send
+      await prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          status: "ACTIVE",
+          smtpStatus: "CONNECTED",
+          lastCheckedAt: new Date(),
+          lastSuccessfulAt: new Date(),
+          lastError: null,
+        },
+      }).catch(() => undefined);
+
+      const response = NextResponse.json({ success: true, messageId: providerMessageId });
+      response.cookies.set("active_mailbox_id", mailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+      attachVaultToResponse(response, exportStoreToVault(mailbox.id));
+      return response;
     } catch (error) {
       const safe = safeErrorMessage(error);
       await prisma.$transaction([

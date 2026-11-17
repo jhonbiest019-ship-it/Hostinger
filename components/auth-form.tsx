@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 export function AuthForm({ mode: initialMode }: { mode: "login" | "signup" }) {
   const [currentMode, setCurrentMode] = useState<"login" | "signup" | "reset">(initialMode);
@@ -13,6 +13,23 @@ export function AuthForm({ mode: initialMode }: { mode: "login" | "signup" }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [capacity, setCapacity] = useState<{
+    maxUsers: number;
+    currentUsers: number;
+    remainingSeats: number;
+    signupAllowed: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/signup")
+      .then((r) => r.json())
+      .then((data) => {
+        if (typeof data.maxUsers === "number") {
+          setCapacity(data);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -163,6 +180,17 @@ export function AuthForm({ mode: initialMode }: { mode: "login" | "signup" }) {
               ? "Enter the 6-digit verification code and your new password."
               : "Enter your account email to receive a secure reset verification code."}
           </p>
+
+          {currentMode === "signup" && capacity && (
+            <div className="mt-3 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/70 px-3.5 py-2 text-xs">
+              <span className="font-medium text-emerald-900">
+                👥 Team Signup Capacity: <strong className="font-semibold">{capacity.maxUsers} Users Allowed</strong>
+              </span>
+              <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 font-bold text-white shadow-xs">
+                {capacity.remainingSeats > 0 ? `${capacity.remainingSeats} Seats Free` : "Full"}
+              </span>
+            </div>
+          )}
 
           <form className="mt-6 space-y-4" onSubmit={submit}>
             {currentMode === "signup" && (

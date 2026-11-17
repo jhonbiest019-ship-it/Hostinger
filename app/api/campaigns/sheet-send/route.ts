@@ -8,6 +8,8 @@ import { discoverBrandFormUrl } from "@/lib/forms/discovery";
 import { resolveFormTemplateValues } from "@/lib/forms/resolver";
 import { browserAgent } from "@/lib/browser/agent";
 import { extractRowData } from "@/lib/sheet-detect";
+import { attachVaultToResponse } from "@/lib/vault";
+import { exportStoreToVault } from "@/lib/fallback-db";
 
 export async function POST(request: NextRequest) {
   try {
@@ -55,32 +57,34 @@ export async function POST(request: NextRequest) {
 
     let mailbox = null;
     if (mailboxId) {
-      mailbox = await prisma.mailbox.findFirst({
+      mailbox = (await prisma.mailbox.findFirst({
         where: { id: mailboxId, userId },
-      });
-      if (!mailbox) {
-        mailbox = await prisma.mailbox.findFirst({
-          where: { id: mailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-        });
+      })) || (await prisma.mailbox.findFirst({
+        where: { id: mailboxId },
+      }));
+    }
+    if (!mailbox) {
+      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
+      if (cookieMailboxId) {
+        mailbox = await prisma.mailbox.findFirst({ where: { id: cookieMailboxId } });
       }
     }
     if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      mailbox = (await prisma.mailbox.findFirst({
         where: { userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
-      });
-    }
-    if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      })) || (await prisma.mailbox.findFirst({
         where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
         orderBy: { updatedAt: "desc" },
-      });
-    }
-    if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      })) || (await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+      })) || (await prisma.mailbox.findFirst({
         where: { userId },
         orderBy: { createdAt: "desc" },
-      });
+      })) || (await prisma.mailbox.findFirst({
+        orderBy: { createdAt: "desc" },
+      }));
     }
 
     if (!saveOnly && !mailbox) {
@@ -470,7 +474,7 @@ export async function POST(request: NextRequest) {
 
     const endTime = new Date(baseRunAt.getTime() + Math.max(0, validEmailCount - 1) * spacingSeconds * 1000);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       campaignId: campaign.id,
       campaignName: finalCampaignName,
@@ -487,6 +491,18 @@ export async function POST(request: NextRequest) {
       formAutomationEnabled: Boolean(formAutomationEnabled),
       formJobsCount: formJobsCreatedCount,
     });
+
+    if (mailbox?.id) {
+      response.cookies.set("active_mailbox_id", mailbox.id, {
+        path: "/",
+        sameSite: "lax",
+        httpOnly: false,
+        maxAge: 60 * 60 * 24 * 365,
+      });
+      attachVaultToResponse(response, exportStoreToVault(mailbox.id));
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("Sheet send error:", error);

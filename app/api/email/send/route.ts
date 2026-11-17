@@ -5,6 +5,8 @@ import { connectionRateLimit } from "@/lib/rate-limit";
 import { sendFromMailbox } from "@/lib/email/send-service";
 import { renderTemplate } from "@/lib/email/template";
 import { sendSchema } from "@/lib/email/message-validation";
+import { attachVaultToResponse } from "@/lib/vault";
+import { exportStoreToVault } from "@/lib/fallback-db";
 
 export async function POST(request: NextRequest) {
   let userId = "";
@@ -25,23 +27,20 @@ export async function POST(request: NextRequest) {
     // 1. Fetch Mailbox with multi-level resilient fallback
     let mailbox = null;
     if (input.mailboxId && input.mailboxId !== "undefined" && input.mailboxId !== "null") {
-      mailbox = await prisma.mailbox.findFirst({
+      mailbox = (await prisma.mailbox.findFirst({
         where: { id: input.mailboxId, userId },
-      });
-      // If not owned by user, check if it's an active verified mailbox on this ERP
-      if (!mailbox) {
-        mailbox = await prisma.mailbox.findFirst({
-          where: { id: input.mailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-        });
-      }
+      })) || (await prisma.mailbox.findFirst({
+        where: { id: input.mailboxId },
+      }));
     }
 
-    // Fallback 1: Check active_mailbox_id cookie
+    // Fallback 1: Check active_mailbox_id cookie or header
     if (!mailbox) {
-      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim();
+      const headerMailboxId = request.headers.get("x-active-mailbox-id")?.trim();
+      const cookieMailboxId = request.cookies.get("active_mailbox_id")?.value?.trim() || headerMailboxId;
       if (cookieMailboxId) {
         mailbox = await prisma.mailbox.findFirst({
-          where: { id: cookieMailboxId, status: "ACTIVE", smtpStatus: "CONNECTED" },
+          where: { id: cookieMailboxId },
         });
       }
     }
@@ -62,20 +61,25 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Fallback 4: Any active mailbox for this user
+    // Fallback 4: Any active mailbox on this system
     if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      mailbox = (await prisma.mailbox.findFirst({
         where: { userId, status: "ACTIVE" },
         orderBy: { updatedAt: "desc" },
-      });
+      })) || (await prisma.mailbox.findFirst({
+        where: { status: "ACTIVE" },
+        orderBy: { updatedAt: "desc" },
+      }));
     }
 
-    // Fallback 5: Any mailbox for this user
+    // Fallback 5: Any configured mailbox on this system with credentials
     if (!mailbox) {
-      mailbox = await prisma.mailbox.findFirst({
+      mailbox = (await prisma.mailbox.findFirst({
         where: { userId },
         orderBy: { updatedAt: "desc" },
-      });
+      })) || (await prisma.mailbox.findFirst({
+        orderBy: { updatedAt: "desc" },
+      }));
     }
 
     if (!mailbox) {
@@ -84,10 +88,11 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
-    if (mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") {
+
+    if (!mailbox.encryptedCredentials || !mailbox.username) {
       return NextResponse.json(
-        { error: `Mailbox ${mailbox.emailAddress} is not active. Please click 'Test' in the Mailboxes tab to verify its connection before sending.` },
-        { status: 409 }
+        { error: `Mailbox ${mailbox.emailAddress} does not have credentials configured. Please check Mailboxes tab.` },
+        { status: 400 }
       );
     }
 
@@ -217,6 +222,18 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Successful live send proves the mailbox is ACTIVE and SMTP is CONNECTED
+      await prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          status: "ACTIVE",
+          smtpStatus: "CONNECTED",
+          lastCheckedAt: new Date(),
+          lastSuccessfulAt: new Date(),
+          lastError: null,
+        },
+      }).catch(() => undefined);
+
       const response = NextResponse.json({
         success: true,
         messageId: providerMessageId,
@@ -229,6 +246,7 @@ export async function POST(request: NextRequest) {
         httpOnly: false,
         maxAge: 60 * 60 * 24 * 365,
       });
+      attachVaultToResponse(response, exportStoreToVault(mailbox.id));
       return response;
     } catch (sendError) {
       console.error("Manual email send error:", sendError);

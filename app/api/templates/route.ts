@@ -45,8 +45,21 @@ export async function GET(request: NextRequest) {
       orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
     });
 
-    // Auto-designate first template as active if none is currently active
-    if (templates.length > 0 && !templates.some((t) => t.isDefault)) {
+    // Auto-designate first template as active if none is currently active, or seed default template
+    if (templates.length === 0) {
+      const seeded = await prisma.template.create({
+        data: {
+          userId,
+          name: "Default Partnership Outreach",
+          subject: "Partnership Inquiry: Collaboration with {{brandName}}",
+          body: "Hi {{brandName}} Team,\n\nWe love your brand and would love to discuss a partnership.\n\nBest regards,\nDavid Lucas",
+          status: "ACTIVE",
+          isDefault: true,
+        },
+        select,
+      }).catch(() => null);
+      if (seeded) templates = [seeded];
+    } else if (!templates.some((t) => t.isDefault)) {
       const firstId = templates[0].id;
       await prisma.template.update({
         where: { id: firstId },
