@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { renderTemplate, formatEmailBodyToHtml } from "@/lib/email/template";
+import { SignaturePickerModal } from "@/components/signature-picker-modal";
+import { appendSignatureToBody } from "@/lib/email/signatures";
 
 export interface ReviewRecipient {
   brandName: string;
@@ -90,6 +92,7 @@ export function PreSendReviewModal({
   const [editEmailModalOpen, setEditEmailModalOpen] = useState(false);
   const [editableSubject, setEditableSubject] = useState(subjectTemplate);
   const [editableBody, setEditableBody] = useState(bodyTemplate);
+  const [sigModalOpen, setSigModalOpen] = useState(false);
 
   // Form URL quick edit
   const [editingUrlIndex, setEditingUrlIndex] = useState<number | null>(null);
@@ -891,9 +894,18 @@ export function PreSendReviewModal({
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-gray-700 uppercase mb-1">
-                  Email Body:
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-gray-700 uppercase">
+                    Email Body:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSigModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-100 to-indigo-100 hover:from-purple-200 hover:to-indigo-200 text-[#673DE6] text-xs font-bold border border-purple-200 transition shadow-2xs cursor-pointer"
+                  >
+                    <span>✍️</span> Choose Signature (8–10 Styles)
+                  </button>
+                </div>
                 <textarea
                   rows={8}
                   value={editableBody}
@@ -922,6 +934,15 @@ export function PreSendReviewModal({
           </div>
         </div>
       )}
+
+      {/* Professional 10-Style Signature Picker Modal */}
+      <SignaturePickerModal
+        isOpen={sigModalOpen}
+        onClose={() => setSigModalOpen(false)}
+        onSelectSignature={(sigText) => {
+          setEditableBody((prev) => appendSignatureToBody(prev, sigText));
+        }}
+      />
     </div>
   );
 }

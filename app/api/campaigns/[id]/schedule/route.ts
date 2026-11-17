@@ -97,7 +97,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         }
       }
       if (!template) {
-        template = await tx.template.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { createdAt: "asc" } });
+        template = (await tx.template.findFirst({ where: { userId, status: "ACTIVE", isDefault: true } }))
+          || (await tx.template.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" } }));
         if (template) {
           await tx.campaign.update({ where: { id }, data: { templateId: template.id } });
         }

@@ -97,6 +97,13 @@ export async function POST(request: NextRequest) {
       select,
     });
 
+    if (shouldBeDefault) {
+      await prisma.campaign.updateMany({
+        where: { userId, status: { in: ["DRAFT", "READY", "SCHEDULED", "SENDING", "ACTIVE", "PAUSED"] } },
+        data: { templateId: template.id },
+      });
+    }
+
     return NextResponse.json({ template }, { status: 201 });
   } catch (error) {
     if (error instanceof Response) return error;

@@ -79,6 +79,13 @@ export async function PATCH(
       },
       select,
     });
+
+    if (parsed.data.isDefault === true) {
+      await prisma.campaign.updateMany({
+        where: { userId, status: { in: ["DRAFT", "READY", "SCHEDULED", "SENDING", "ACTIVE", "PAUSED"] } },
+        data: { templateId: id },
+      });
+    }
     return NextResponse.json({ template });
   } catch (error) {
     if (error instanceof Response) return error;

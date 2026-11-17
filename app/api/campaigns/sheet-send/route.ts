@@ -103,14 +103,41 @@ export async function POST(request: NextRequest) {
       finalCampaignName = existingCount > 0 ? `${baseDateName} (#${existingCount + 1})` : baseDateName;
     }
 
-    // Prepare Template
+    // Prepare Template - 100% Real-Time Active Template Sync
     let effectiveTemplateId = templateId;
-    if (!effectiveTemplateId) {
+
+    if (effectiveTemplateId) {
+      const existingTpl = await prisma.template.findFirst({
+        where: { id: effectiveTemplateId, userId },
+      });
+      if (existingTpl) {
+        if (effectiveSubject !== existingTpl.subject || effectiveBody !== existingTpl.body) {
+          await prisma.template.update({
+            where: { id: effectiveTemplateId },
+            data: {
+              subject: effectiveSubject,
+              body: effectiveBody,
+              updatedAt: new Date(),
+            },
+          });
+        }
+      }
+    } else {
       const activeTemplate = await prisma.template.findFirst({
         where: { userId, status: "ACTIVE", isDefault: true },
-        select: { id: true },
       });
+
       if (activeTemplate) {
+        if (effectiveSubject !== activeTemplate.subject || effectiveBody !== activeTemplate.body) {
+          await prisma.template.update({
+            where: { id: activeTemplate.id },
+            data: {
+              subject: effectiveSubject,
+              body: effectiveBody,
+              updatedAt: new Date(),
+            },
+          });
+        }
         effectiveTemplateId = activeTemplate.id;
       } else {
         const newTemplate = await prisma.template.create({

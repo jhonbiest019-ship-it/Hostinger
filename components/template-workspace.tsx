@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Badge, EmptyState } from "@/components/ui";
 import { renderTemplate, autoFormatGreetingWithBrand, formatEmailBodyToHtml } from "@/lib/email/template";
+import { SignaturePickerModal } from "@/components/signature-picker-modal";
+import { appendSignatureToBody } from "@/lib/email/signatures";
 
 type Template = {
   id: string;
@@ -34,6 +36,7 @@ export function TemplateWorkspace() {
   const [search, setSearch] = useState("");
   const [preview, setPreview] = useState(false);
   const [previewModalTpl, setPreviewModalTpl] = useState<Template | null>(null);
+  const [sigModalOpen, setSigModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -196,9 +199,18 @@ export function TemplateWorkspace() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Email Body <span className="text-red-500">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold text-gray-700">
+                Email Body <span className="text-red-500">*</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setSigModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-100 to-indigo-100 hover:from-purple-200 hover:to-indigo-200 text-[#673DE6] text-xs font-bold border border-purple-200 transition shadow-2xs cursor-pointer"
+              >
+                <span>✍️</span> Choose Signature (8–10 Styles)
+              </button>
+            </div>
             <textarea
               required
               rows={8}
@@ -495,6 +507,18 @@ export function TemplateWorkspace() {
           </div>
         </div>
       )}
+
+      {/* Professional 10-Style Signature Picker Modal */}
+      <SignaturePickerModal
+        isOpen={sigModalOpen}
+        onClose={() => setSigModalOpen(false)}
+        onSelectSignature={(sigText) => {
+          setForm((prev) => ({
+            ...prev,
+            body: appendSignatureToBody(prev.body, sigText),
+          }));
+        }}
+      />
     </div>
   );
 }

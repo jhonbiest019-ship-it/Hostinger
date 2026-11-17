@@ -7,6 +7,8 @@ import { parseCsv, csvValue } from "@/lib/csv";
 import { renderTemplate, formatEmailBodyToHtml } from "@/lib/email/template";
 import { PreSendReviewModal, ReviewRecipient } from "@/components/pre-send-review-modal";
 import { detectColumnKeys, extractRowData, inferBrandName } from "@/lib/sheet-detect";
+import { SignaturePickerModal } from "@/components/signature-picker-modal";
+import { appendSignatureToBody } from "@/lib/email/signatures";
 
 type Campaign = {
   id: string;
@@ -298,6 +300,7 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [sigModalOpen, setSigModalOpen] = useState(false);
 
   // Send Mode & Spacing
   const [sendMode, setSendMode] = useState<"sendNow" | "schedule">("sendNow");
@@ -2959,7 +2962,16 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Email Body</label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-gray-700">Email Body</label>
+                      <button
+                        type="button"
+                        onClick={() => setSigModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-purple-100 to-indigo-100 hover:from-purple-200 hover:to-indigo-200 text-[#673DE6] text-xs font-bold border border-purple-200 transition shadow-2xs cursor-pointer"
+                      >
+                        <span>✍️</span> Choose Signature (8–10 Styles)
+                      </button>
+                    </div>
                     <textarea
                       rows={11}
                       value={body}
@@ -4643,6 +4655,15 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
           }}
         />
       )}
+
+      {/* Professional 10-Style Signature Picker Modal */}
+      <SignaturePickerModal
+        isOpen={sigModalOpen}
+        onClose={() => setSigModalOpen(false)}
+        onSelectSignature={(sigText) => {
+          setBody((prev) => appendSignatureToBody(prev, sigText));
+        }}
+      />
     </div>
   );
 }

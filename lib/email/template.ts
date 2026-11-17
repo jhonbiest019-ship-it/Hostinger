@@ -1,4 +1,5 @@
 import { inferBrandName } from "@/lib/sheet-detect";
+import { parseAndRenderSignatureHtml } from "@/lib/email/signatures";
 
 export const TEMPLATE_VARIABLES = [
   "brandName",
@@ -253,104 +254,12 @@ export function formatEmailBodyToHtml(text: string): string {
   const mainPart = text.slice(0, sigMatch.index).trimEnd();
   const sigPart = sigMatch[2].trim();
 
-  // Check if signature has 2-column format with '|'
-  const sigLines = sigPart.split("\n").map((l) => l.trim()).filter(Boolean);
-  const hasPipe = sigLines.length >= 2 && sigLines.some((l) => l.includes("|"));
-
-  if (!hasPipe) {
-    return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">${renderParagraphsHtml(text)}</div>`;
-  }
-
-  // Parse rows with pipe '|'
-  const rows = sigLines.map((line) => {
-    const parts = line.split("|");
-    return {
-      left: parts[0]?.trim() || "",
-      right: parts.slice(1).join("|")?.trim() || "",
-    };
-  });
-
-  const leftName = rows[0]?.left || "";
-  const leftTitle = rows[1]?.left || "";
-  const leftCompany = rows[2]?.left || "";
-
-  const rightRowsHtml = rows
-    .filter((r) => r.right)
-    .map((r, idx) => {
-      let rawText = r.right.trim();
-
-      const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/;
-      const phoneRegex = /([0-9+() -]{7,})/;
-      const hasEmail = emailRegex.test(rawText);
-      const hasPhone = !hasEmail && phoneRegex.test(rawText);
-      const hasAddress =
-        !hasEmail &&
-        !hasPhone &&
-        (rawText.toLowerCase().includes("road") ||
-          rawText.toLowerCase().includes("street") ||
-          rawText.toLowerCase().includes("fl") ||
-          rawText.toLowerCase().includes("orlando") ||
-          idx >= 2);
-
-      let icon = "";
-      if (hasPhone || /^(📞|☎️|📱)/.test(rawText)) {
-        icon = "📞";
-      } else if (hasEmail || /^(✉️|✉|📧)/.test(rawText)) {
-        icon = "✉️";
-      } else if (hasAddress || /^(📍|📌)/.test(rawText)) {
-        icon = "📍";
-      }
-
-      // Clean away any existing emojis or leading symbols to avoid duplicates
-      rawText = rawText
-        .replace(/^[\u{1F4DE}\u{260E}\u{260F}\u{1F4F1}\u{2709}\u{1F4E7}\u{1F4E8}\u{1F4CD}\u{1F4CC}\u{FE0F}\u{FFFD}📞☎️📱✉️✉📧📍📌?\s]+/u, "")
-        .trim();
-
-      let content = escapeHtml(rawText);
-      if (hasEmail) {
-        const m = rawText.match(emailRegex);
-        if (m) {
-          content = content.replace(
-            m[1],
-            `<a href="mailto:${m[1]}" style="color: #111827; text-decoration: none;">${m[1]}</a>`
-          );
-        }
-      } else if (hasPhone) {
-        const m = rawText.match(phoneRegex);
-        if (m) {
-          const rawNum = m[1].replace(/[^0-9+]/g, "");
-          content = content.replace(
-            m[1].trim(),
-            `<a href="tel:${rawNum}" style="color: #111827; text-decoration: none; font-weight: 500;">${m[1].trim()}</a>`
-          );
-        }
-      }
-
-      const iconHtml = icon
-        ? `<span style="display: inline-block; margin-right: 7px; font-size: 13.5px; vertical-align: middle;">${icon}</span>`
-        : "";
-
-      return `<div style="font-size: 13.5px; color: #111827; margin-bottom: 5px; line-height: 1.4; white-space: nowrap;">${iconHtml}${content}</div>`;
-    })
-    .join("");
-
-  const sigHtml = `
-  <div style="margin-top: 24px; color: #6B7280; font-size: 14px;">--</div>
-  <table cellpadding="0" cellspacing="0" border="0" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin-top: 10px; border-collapse: collapse;">
-    <tr>
-      <td style="padding-right: 22px; vertical-align: middle; white-space: nowrap;">
-        <div style="font-size: 17px; font-weight: bold; color: #000000; line-height: 1.25;">${escapeHtml(leftName)}</div>
-        ${leftTitle ? `<div style="font-size: 13.5px; color: #374151; margin-top: 3px; line-height: 1.3;">${escapeHtml(leftTitle)}</div>` : ""}
-        ${leftCompany ? `<div style="font-size: 13.5px; font-weight: 700; color: #000000; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.3;">${escapeHtml(leftCompany)}</div>` : ""}
-      </td>
-      <td style="border-left: 2px solid #111827; padding-left: 22px; vertical-align: middle; white-space: nowrap;">
-        ${rightRowsHtml}
-      </td>
-    </tr>
-  </table>`;
+  // Render signature using the professional 10-style business engine
+  const renderedSigHtml = parseAndRenderSignatureHtml(sigPart);
 
   return `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; color: #111827; line-height: 1.6;">
     ${renderParagraphsHtml(mainPart)}
-    ${sigHtml}
+    <div style="margin-top: 22px; color: #6B7280; font-size: 14px;">--</div>
+    ${renderedSigHtml}
   </div>`;
 }

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatEmailBodyToHtml, renderTemplate } from "@/lib/email/template";
+import { SignaturePickerModal } from "@/components/signature-picker-modal";
+import { appendSignatureToBody } from "@/lib/email/signatures";
 
 interface MailFolderItem {
   name: string;
@@ -438,6 +440,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
+  const [composeSigModalOpen, setComposeSigModalOpen] = useState(false);
   const [composeSending, setComposeSending] = useState(false);
   const [templates, setTemplates] = useState<
     Array<{ id: string; name: string; subject: string; body: string; isDefault?: boolean }>
@@ -900,15 +903,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   function handleInsertSignature() {
-    const sig = `\n\n--\nDavid Lucas          |  📞 352-695-1331\nSales Manager        |  ✉️ sales@qayyumestore.com\nQAYYUM ESTORE        |  📍 7901 4TH ST N STE 20723`;
-    if (composeBody.includes("David Lucas") && composeBody.includes("352-695-1331")) {
-      setDraftNotice("Signature already in email");
-      setTimeout(() => setDraftNotice(""), 2500);
-      return;
-    }
-    setComposeBody((prev) => (prev ? prev.trimEnd() + sig : sig.trimStart()));
-    setDraftNotice("✓ David Lucas signature added");
-    setTimeout(() => setDraftNotice(""), 2500);
+    setComposeSigModalOpen(true);
   }
 
   async function handleSaveAsTemplate() {
@@ -2059,12 +2054,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 )}
               </div>
 
-              {/* 10. Insert David Lucas Signature (✍️) */}
+              {/* 10. Choose Signature Style (8–10 Professional Styles) (✍️) */}
               <button
                 type="button"
                 onClick={handleInsertSignature}
                 className="w-8 h-8 rounded-xl text-gray-600 hover:bg-purple-50 hover:text-[#673DE6] flex items-center justify-center transition cursor-pointer"
-                title="Insert David Lucas 2-Column Signature (✍️)"
+                title="Choose Signature Style (8–10 Professional Styles) (✍️)"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
@@ -2100,6 +2095,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       )}
+
+      {/* Professional 10-Style Signature Picker Modal */}
+      <SignaturePickerModal
+        isOpen={composeSigModalOpen}
+        onClose={() => setComposeSigModalOpen(false)}
+        onSelectSignature={(sigText) => {
+          setComposeBody((prev) => appendSignatureToBody(prev, sigText));
+          setDraftNotice("✓ Signature applied to email!");
+          setTimeout(() => setDraftNotice(""), 3000);
+        }}
+      />
 
       {/* Schedule Send Modal */}
       {scheduleSendModalOpen && (
