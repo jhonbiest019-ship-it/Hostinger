@@ -203,10 +203,25 @@ export async function POST(
     });
 
     if (eligibleRecipients.length === 0) {
-      return NextResponse.json(
-        { error: "No eligible pending recipients with valid email addresses found in this campaign." },
-        { status: 400 }
-      );
+      // If there are no recipients with valid email addresses yet, still activate the campaign & link mailbox
+      await prisma.campaign.update({
+        where: { id },
+        data: {
+          mailboxId: finalMailboxId,
+          status: "ACTIVE",
+          formAutomationEnabled: Boolean(queueWebforms || campaign.formAutomationEnabled),
+          updatedAt: new Date(),
+        },
+      });
+
+      return NextResponse.json({
+        success: true,
+        count: 0,
+        mode,
+        status: "ACTIVE",
+        firstEmailDispatched: false,
+        message: `🚀 Campaign "${campaign.name}" is now ACTIVE! (Note: Selected rows currently have missing email addresses in the Google Sheet. As soon as emails are added, they will dispatch automatically).`,
+      });
     }
 
     // Find all existing scheduled jobs for this campaign that are not COMPLETED

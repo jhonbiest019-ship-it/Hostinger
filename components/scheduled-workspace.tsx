@@ -2736,6 +2736,18 @@ export function ScheduledWorkspace() {
           targetCampForSchedule.scheduledJobs?.length ||
           0;
 
+        const validRecipients = (targetCampForSchedule.recipients || []).filter((r) => {
+          const email = (r.snapshotEmail || (r as any).contact?.email || "").trim();
+          return Boolean(
+            email &&
+            /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) &&
+            !/^(n\/a|none|undefined|null|-)$/i.test(email) &&
+            !email.includes("@placeholder.invalid")
+          );
+        });
+        const validCount = validRecipients.length;
+        const missingEmailCount = totalTargetBrands - validCount;
+
         let projectedStartTime = "Now";
         let projectedEndTime = "—";
         try {
@@ -3094,11 +3106,32 @@ export function ScheduledWorkspace() {
                 </div>
 
                 {/* 6. Live Delivery Projection Summary Card */}
-                <div className="p-3 bg-purple-50/60 rounded-2xl border border-purple-100 space-y-1.5 text-[11px]">
+                <div className="p-3.5 bg-purple-50/60 rounded-2xl border border-purple-100 space-y-2 text-[11px]">
                   <div className="flex items-center justify-between text-purple-900 font-bold">
                     <span>📋 Dispatch Summary</span>
-                    <span className="font-mono">{totalTargetBrands} Recipients</span>
+                    <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                      <span className="px-2 py-0.5 rounded-md bg-purple-100 text-[#673DE6] font-extrabold">{totalTargetBrands} Total</span>
+                      {validCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-extrabold">{validCount} Ready for Email</span>
+                      )}
+                      {missingEmailCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-extrabold">{missingEmailCount} No Email</span>
+                      )}
+                    </div>
                   </div>
+
+                  {missingEmailCount > 0 && validCount === 0 && (
+                    <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-[10px] space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <span>ℹ️</span>
+                        <span>Sheet mein is range (Rows 411–427) par abhi email address khali (blank) hain.</span>
+                      </div>
+                      <p className="text-amber-800">
+                        Confirm karne par campaign <strong>ACTIVE</strong> ho jayegi. Jaise hi sheet mein emails add hongi ya webform chalega, dispatch foran shuru ho jayega.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-2 text-gray-600 pt-1 border-t border-purple-100/60 text-[10px]">
                     <div>
                       <span className="text-gray-400 block font-medium">Start Time:</span>
@@ -3106,7 +3139,7 @@ export function ScheduledWorkspace() {
                     </div>
                     <div>
                       <span className="text-gray-400 block font-medium">Estimated Completion:</span>
-                      <span className="font-bold text-gray-800">{projectedEndTime}</span>
+                      <span className="font-bold text-gray-800">{validCount > 0 ? projectedEndTime : "Active immediately"}</span>
                     </div>
                     <div>
                       <span className="text-gray-400 block font-medium">Interval Gap:</span>
@@ -3141,7 +3174,9 @@ export function ScheduledWorkspace() {
                     <span>{campSendMode === "sendNow" ? "⚡" : "🕒"}</span>
                     <span>
                       {campSchedulingBusy
-                        ? "Activating & Dispatching First Email..."
+                        ? "Activating Campaign..."
+                        : validCount === 0
+                        ? "Confirm & Activate Campaign in Real Time"
                         : campSendMode === "sendNow"
                         ? "Confirm & Dispatch in Real Time Now"
                         : "Confirm & Schedule Campaign"}
