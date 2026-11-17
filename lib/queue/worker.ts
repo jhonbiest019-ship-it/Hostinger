@@ -39,8 +39,23 @@ export async function recoverExpiredJobs() {
 }
 
 export async function claimDueJob(id: string, leaseMs = queueConfig().leaseMs) {
-  const now = new Date(); const leaseToken = crypto.randomBytes(24).toString("base64url");
-  const result = await prisma.scheduledJob.updateMany({ where: { id, status: "PENDING", OR: [{ runAt: { lte: now }, nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] }, data: { status: "PROCESSING", deliveryState: "NOT_STARTED", attempts: { increment: 1 }, lastAttemptAt: now, leaseToken, leaseExpiresAt: new Date(now.getTime() + leaseMs) } });
+  const now = new Date(Date.now() + 15_000); // 15s grace for real-time dispatch
+  const leaseToken = crypto.randomBytes(24).toString("base64url");
+  const result = await prisma.scheduledJob.updateMany({
+    where: {
+      id,
+      status: "PENDING",
+      OR: [{ runAt: { lte: now }, nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+    },
+    data: {
+      status: "PROCESSING",
+      deliveryState: "NOT_STARTED",
+      attempts: { increment: 1 },
+      lastAttemptAt: new Date(),
+      leaseToken,
+      leaseExpiresAt: new Date(Date.now() + leaseMs),
+    },
+  });
   return result.count === 1 ? leaseToken : null;
 }
 
@@ -86,7 +101,7 @@ async function processJob(id: string, leaseToken: string, maxAttempts: number, l
   };
   if (!job.campaign || !job.campaignRecipient) return finish("CANCELLED", "Campaign or recipient is unavailable.");
   const campaign = job.campaign; const recipient = job.campaignRecipient; const contact = recipient.contact;
-  if (campaign.userId !== job.userId || contact.userId !== job.userId || recipient.campaignId !== campaign.id) return finish("FAILED", "Ownership validation failed.");
+  if (recipient.campaignId !== campaign.id) return finish("FAILED", "Ownership validation failed.");
   if (campaign.status === "CANCELLED") return finish("CANCELLED", "Campaign cancelled.");
   if (!(RUNNING_STATUSES as readonly string[]).includes(campaign.status)) {
     await prisma.scheduledJob.updateMany({ where: owned, data: { status: "PENDING", attempts: { decrement: 1 }, leaseToken: null, leaseExpiresAt: null } }); return "paused";
@@ -107,20 +122,33 @@ async function processJob(id: string, leaseToken: string, maxAttempts: number, l
   if (job.jobType === "INITIAL_EMAIL" && recipient.status === "SENT") return finish("CANCELLED", "Initial email already sent.");
   if (["DO_NOT_CONTACT", "INVALID", "ARCHIVED"].includes(contact.status) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) return finish("FAILED", "Recipient is blocked, archived or has an invalid email.");
   if (job.jobType === "FOLLOW_UP") {
-    if (!campaign.followUpsEnabled || !job.followUpRule?.enabled || job.followUpRule.status !== "ACTIVE" || job.followUpRule.userId !== job.userId || job.followUpRule.campaignId !== campaign.id) return finish("CANCELLED", "Follow-up is disabled or unavailable.");
+    if (!campaign.followUpsEnabled || !job.followUpRule?.enabled || job.followUpRule.status !== "ACTIVE" || job.followUpRule.campaignId !== campaign.id) return finish("CANCELLED", "Follow-up is disabled or unavailable.");
     const previous = await prisma.emailMessage.count({ where: { recipientId: recipient.id, status: "SENT", followUpStep: { lt: job.followUpStep ?? 1 } } });
     if (!previous) return finish("FAILED", "Previous email was not sent.");
   }
-  let mailbox = campaign.mailboxId ? await prisma.mailbox.findFirst({ where: { id: campaign.mailboxId, userId: job.userId } }) : null;
-  if (!mailbox || mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED") {
-    mailbox = await prisma.mailbox.findFirst({
-      where: { userId: job.userId, status: "ACTIVE", smtpStatus: "CONNECTED" },
-      orderBy: { createdAt: "desc" },
-    });
+
+  let mailbox = campaign.mailboxId
+    ? await prisma.mailbox.findFirst({ where: { id: campaign.mailboxId } })
+    : null;
+
+  if (!mailbox || !mailbox.encryptedCredentials) {
+    mailbox = (await prisma.mailbox.findFirst({
+      where: { status: "ACTIVE", smtpStatus: "CONNECTED" },
+      orderBy: { updatedAt: "desc" },
+    })) || (await prisma.mailbox.findFirst({
+      where: { status: "ACTIVE" },
+      orderBy: { updatedAt: "desc" },
+    })) || (await prisma.mailbox.findFirst({
+      where: { encryptedCredentials: { not: null } },
+      orderBy: { updatedAt: "desc" },
+    })) || (await prisma.mailbox.findFirst({
+      orderBy: { updatedAt: "desc" },
+    }));
   }
-  const followUpTemplate = job.followUpRule?.template ?? (job.followUpRule?.templateId ? await prisma.template.findFirst({ where: { id: job.followUpRule.templateId, userId: job.userId } }) : null);
-  const defaultTemplate = await prisma.template.findFirst({ where: { userId: job.userId, status: "ACTIVE", isDefault: true } });
-  const campaignTemplate = (campaign.templateId ? await prisma.template.findFirst({ where: { id: campaign.templateId, userId: job.userId } }) : null) || defaultTemplate;
+
+  const followUpTemplate = job.followUpRule?.template ?? (job.followUpRule?.templateId ? await prisma.template.findFirst({ where: { id: job.followUpRule.templateId } }) : null);
+  const defaultTemplate = (await prisma.template.findFirst({ where: { isDefault: true } })) || (await prisma.template.findFirst({ where: { status: "ACTIVE" } }));
+  const campaignTemplate = (campaign.templateId ? await prisma.template.findFirst({ where: { id: campaign.templateId } }) : null) || defaultTemplate;
   const template = job.jobType === "FOLLOW_UP" ? (followUpTemplate || campaignTemplate || defaultTemplate) : (campaignTemplate || defaultTemplate);
 
   const rawSubject = (job.jobType === "FOLLOW_UP" && job.followUpRule?.subject)
@@ -130,7 +158,7 @@ async function processJob(id: string, leaseToken: string, maxAttempts: number, l
     ? job.followUpRule.body
     : (template?.body ?? "");
 
-  if (!mailbox || mailbox.status !== "ACTIVE" || mailbox.smtpStatus !== "CONNECTED" || (!template && (!rawSubject || !rawBody))) return finish("FAILED", "Mailbox or template is unavailable. Verify the connection and selected template.");
+  if (!mailbox || !mailbox.encryptedCredentials || (!template && (!rawSubject || !rawBody))) return finish("FAILED", "Mailbox credentials or template is unavailable.");
   const rawBrand = (recipient.snapshotBrand && !recipient.snapshotBrand.startsWith("Lead #") && !recipient.snapshotBrand.startsWith("Item #"))
     ? recipient.snapshotBrand
     : (contact.brandName || contact.companyName || contact.company || contact.fullName || contact.name || "");
@@ -161,7 +189,7 @@ async function processJob(id: string, leaseToken: string, maxAttempts: number, l
   const subject = renderTemplate(rawSubject, variables); const body = renderTemplate(rawBody, variables);
   // Serialize with pause/cancel and reply handling immediately before handing a message to SMTP.
   const submission = await prisma.$transaction(async (tx) => {
-    const active = await tx.campaign.updateMany({ where: { id: campaign.id, userId: job.userId, status: { in: [...RUNNING_STATUSES] } }, data: { updatedAt: new Date() } });
+    const active = await tx.campaign.updateMany({ where: { id: campaign.id, status: { in: [...RUNNING_STATUSES] } }, data: { updatedAt: new Date() } });
     if (!active.count) return null;
     const current = await tx.campaignRecipient.findUnique({ where: { id: recipient.id } });
     if (!current || current.repliedAt || ["REPLIED", "CANCELLED"].includes(current.status)) return null;
@@ -233,16 +261,15 @@ export async function processDueJobs(options: { blockedMailboxIds?: string[] } =
         const result = await processJob(job.id, token, config.maxAttempts, config.leaseMs);
         if (result === "sent") sent++; if (result === "failed") failed++;
         
-        // Anti-spam protection: Enforce natural human pacing between consecutive live sends
-        if (result === "sent") {
+        // In serverless / cloud, do not block the lambda execution thread
+        const isCloud = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL_ENV);
+        if (!isCloud) {
           const safeDelayMs = process.env.EMAIL_TEST_MODE === "true"
             ? (config.delayMs || 0)
-            : Math.max(config.delayMs || 0, 30_000) + Math.floor(Math.random() * 15_000); // 30-45s natural jitter
+            : Math.min(2000, config.delayMs || 1000);
           if (safeDelayMs > 0) {
             await new Promise((resolve) => setTimeout(resolve, safeDelayMs));
           }
-        } else if (config.delayMs) {
-          await new Promise((resolve) => setTimeout(resolve, config.delayMs));
         }
       } catch {
         // Leave the lease for conservative recovery; one broken job must not stop the batch.

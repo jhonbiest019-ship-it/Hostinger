@@ -321,28 +321,13 @@ export function ScheduledWorkspace() {
   // Open Schedule & Forward Modal for a Campaign
   function handleOpenScheduleCampModal(camp: ScheduledCampaign) {
     setTargetCampForSchedule(camp);
-    setCampSendMode(camp.status === "SENDING" ? "sendNow" : "schedule");
+    // Always default to instant real-time dispatch so emails start immediately on Confirm
+    setCampSendMode("sendNow");
     setCampMailboxId(camp.mailbox?.id || selectedMailboxId || mailboxes[0]?.id || "");
 
-    const nextHour = new Date(Date.now() + 60 * 60 * 1000);
-    const nextHourParts = getKarachiParts(nextHour);
-
-    // If campaign already has scheduled pending jobs with a future runAt, pre-fill that
-    const firstPending = camp.scheduledJobs?.find((j) => j.status === "PENDING");
-    if (firstPending?.runAt) {
-      const jobDate = new Date(firstPending.runAt);
-      if (!isNaN(jobDate.getTime()) && jobDate.getTime() > Date.now()) {
-        const p = getKarachiParts(jobDate);
-        setCampDate(p.date);
-        setCampTime(p.time);
-      } else {
-        setCampDate(nextHourParts.date);
-        setCampTime(nextHourParts.time);
-      }
-    } else {
-      setCampDate(nextHourParts.date);
-      setCampTime(nextHourParts.time);
-    }
+    const nowKarachi = getKarachiParts(new Date());
+    setCampDate(nowKarachi.date);
+    setCampTime(nowKarachi.time);
 
     setCampDelaySeconds(60);
     setCampCustomDelay("60");
@@ -2814,24 +2799,6 @@ export function ScheduledWorkspace() {
                   <div className="grid grid-cols-2 gap-2.5">
                     <button
                       type="button"
-                      onClick={() => setCampSendMode("schedule")}
-                      className={`p-3 rounded-2xl border text-left transition flex items-start gap-2.5 cursor-pointer ${
-                        campSendMode === "schedule"
-                          ? "border-[#673DE6] bg-purple-50/70 shadow-xs ring-2 ring-[#673DE6]/20"
-                          : "border-gray-200 bg-white hover:bg-gray-50"
-                      }`}
-                    >
-                      <span className="text-xl">🕒</span>
-                      <div>
-                        <div className="font-extrabold text-gray-900 text-xs">Specific Date & Time</div>
-                        <div className="text-[10px] text-gray-500 mt-0.5">
-                          Schedule for a precise future time
-                        </div>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
                       onClick={() => setCampSendMode("sendNow")}
                       className={`p-3 rounded-2xl border text-left transition flex items-start gap-2.5 cursor-pointer ${
                         campSendMode === "sendNow"
@@ -2841,9 +2808,27 @@ export function ScheduledWorkspace() {
                     >
                       <span className="text-xl">⚡</span>
                       <div>
-                        <div className="font-extrabold text-gray-900 text-xs">Send Now (Instant Spaced)</div>
+                        <div className="font-extrabold text-gray-900 text-xs">Send Now (Real-Time Spaced)</div>
                         <div className="text-[10px] text-gray-500 mt-0.5">
                           Start sending immediately with safe gaps
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCampSendMode("schedule")}
+                      className={`p-3 rounded-2xl border text-left transition flex items-start gap-2.5 cursor-pointer ${
+                        campSendMode === "schedule"
+                          ? "border-[#673DE6] bg-purple-50/70 shadow-xs ring-2 ring-[#673DE6]/20"
+                          : "border-gray-200 bg-white hover:bg-gray-50"
+                      }`}
+                    >
+                      <span className="text-xl">🕒</span>
+                      <div>
+                        <div className="font-extrabold text-gray-900 text-xs">Specific Future Date & Time</div>
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          Schedule for a precise future time
                         </div>
                       </div>
                     </button>
@@ -3147,9 +3132,9 @@ export function ScheduledWorkspace() {
                     <span>{campSendMode === "sendNow" ? "⚡" : "🕒"}</span>
                     <span>
                       {campSchedulingBusy
-                        ? "Configuring..."
+                        ? "Activating & Dispatching First Email..."
                         : campSendMode === "sendNow"
-                        ? "Confirm & Dispatch in Real Time"
+                        ? "Confirm & Dispatch in Real Time Now"
                         : "Confirm & Schedule Campaign"}
                     </span>
                   </button>

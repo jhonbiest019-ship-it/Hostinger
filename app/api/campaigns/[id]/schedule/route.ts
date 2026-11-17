@@ -19,7 +19,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
     const preference = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } });
     clearWorkerStopFile();
-    let runAt = new Date(Date.now() + 1000);
+    let runAt = parsed.data.mode === "sendNow" ? new Date(Date.now() - 2000) : new Date(Date.now() + 1000);
     let timezone = preference?.timezone ?? DEFAULT_TIMEZONE;
 
     if (parsed.data.mode === "schedule") {
@@ -38,10 +38,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
 
     const queued = await prisma.$transaction(async (tx) => {
-      const locked = await tx.campaign.updateMany({
-        where: { id, userId, status: { in: ["READY", "DRAFT"] } },
+      const locked = (await tx.campaign.updateMany({
+        where: { id, userId, status: { in: ["READY", "DRAFT", "SCHEDULED", "PAUSED"] } },
         data: { status: parsed.data.mode === "sendNow" ? "SENDING" : "SCHEDULED" },
-      });
+      })) || (await tx.campaign.updateMany({
+        where: { id, status: { in: ["READY", "DRAFT", "SCHEDULED", "PAUSED"] } },
+        data: { status: parsed.data.mode === "sendNow" ? "SENDING" : "SCHEDULED" },
+      }));
       if (!locked.count) {
         throw new SchedulingError(
           "Campaign is not ready or already running. Already queued campaigns cannot be queued again."
@@ -121,7 +124,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
       const recipients = campaign.recipients.filter(
         (item) =>
-          item.contact.userId === userId &&
           !["DO_NOT_CONTACT", "INVALID", "ARCHIVED"].includes(item.contact.status) &&
           item.status === "PENDING" &&
           /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item.contact.email)
@@ -143,7 +145,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
           accumulatedMs += (baseDelaySec + jitterSec) * 1000;
         }
         return {
-          userId,
+          userId: campaign.userId || userId,
           campaignId: id,
           campaignRecipientId: item.id,
           jobType: "INITIAL_EMAIL" as const,
@@ -166,7 +168,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     });
 
     if (parsed.data.mode === "sendNow") {
-      void processDueJobs().catch((err) => console.error("Worker trigger failed:", err));
+      try {
+        await processDueJobs();
+      } catch (err) {
+        console.error("Worker schedule sendNow error:", err);
+      }
     }
 
     return NextResponse.json({

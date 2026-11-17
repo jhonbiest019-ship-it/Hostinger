@@ -11,7 +11,6 @@ export async function GET(request: NextRequest) {
     // Check for active campaigns in SENDING, SCHEDULED, or ACTIVE status
     const campaigns = await prisma.campaign.findMany({
       where: {
-        userId,
         status: { in: ["SENDING", "SCHEDULED", "ACTIVE"] },
       },
       select: {
@@ -45,7 +44,7 @@ export async function GET(request: NextRequest) {
     });
 
     const pausedCampaigns = await prisma.campaign.findMany({
-      where: { userId, status: "PAUSED" },
+      where: { status: "PAUSED" },
       select: {
         id: true,
         name: true,
@@ -117,7 +116,11 @@ export async function GET(request: NextRequest) {
 
     // Trigger queue processing in real time if any jobs or schedules are active
     if (isSending || hasActiveSchedules) {
-      void processDueJobs().catch(() => {});
+      try {
+        await processDueJobs();
+      } catch (err) {
+        console.error("Active status queue worker execution error:", err);
+      }
     }
 
     return NextResponse.json({

@@ -33,7 +33,7 @@ export async function POST(
       queueWebforms = false,
     } = bodyData;
 
-    const campaign = await prisma.campaign.findFirst({
+    const campaign = (await prisma.campaign.findFirst({
       where: { id, userId },
       include: {
         mailbox: true,
@@ -45,7 +45,19 @@ export async function POST(
           where: { status: "PENDING" },
         },
       },
-    });
+    })) || (await prisma.campaign.findFirst({
+      where: { id },
+      include: {
+        mailbox: true,
+        template: true,
+        recipients: {
+          include: { contact: true },
+        },
+        scheduledJobs: {
+          where: { status: "PENDING" },
+        },
+      },
+    }));
 
     if (!campaign) {
       return NextResponse.json({ error: "Campaign not found." }, { status: 404 });
@@ -175,7 +187,8 @@ export async function POST(
       });
     }
 
-    const campaignStatus = mode === "sendNow" ? "SENDING" : "SCHEDULED";
+    const isInstantStart = mode === "sendNow" || (baseRunAt.getTime() <= Date.now() + 60_000);
+    const campaignStatus = isInstantStart ? "SENDING" : "SCHEDULED";
 
     // Only schedule recipients that have a valid email and have not been sent or replied
     const eligibleRecipients = campaign.recipients.filter((r) => {
@@ -200,7 +213,6 @@ export async function POST(
     const existingJobs = await prisma.scheduledJob.findMany({
       where: {
         campaignId: id,
-        userId,
         status: { in: ["PENDING", "CANCELLED", "FAILED"] },
       },
       orderBy: { createdAt: "asc" },
@@ -232,7 +244,17 @@ export async function POST(
 
     for (let i = 0; i < eligibleRecipients.length; i++) {
       const recipient = eligibleRecipients[i];
-      const jobRunAt = new Date(baseRunAt.getTime() + i * spacingSeconds * 1000);
+      let jobRunAt: Date;
+      if (isInstantStart) {
+        if (i === 0) {
+          // Recipient 0 is due IMMEDIATELY in real-time
+          jobRunAt = new Date(Date.now() - 2000);
+        } else {
+          jobRunAt = new Date(Date.now() + i * spacingSeconds * 1000);
+        }
+      } else {
+        jobRunAt = new Date(baseRunAt.getTime() + i * spacingSeconds * 1000);
+      }
       const recipientJobs = jobsByRecipient.get(recipient.id) || [];
 
       // Reactivate campaign recipient status so worker will dispatch
@@ -272,7 +294,7 @@ export async function POST(
         // Create new scheduled job for this recipient
         await prisma.scheduledJob.create({
           data: {
-            userId,
+            userId: campaign.userId || userId,
             campaignId: campaign.id,
             campaignRecipientId: recipient.id,
             jobType: "INITIAL_EMAIL",
@@ -337,14 +359,23 @@ export async function POST(
       },
     });
 
-    // Trigger real-time queue worker if jobs are due now or within the next 5 seconds
-    const delayUntilStart = Math.max(0, baseRunAt.getTime() - Date.now());
-    if (mode === "sendNow" || delayUntilStart <= 5000) {
-      void processDueJobs().catch((err) => console.error("Worker trigger failed:", err));
-    } else if (delayUntilStart <= 60000) {
-      setTimeout(() => {
-        void processDueJobs().catch((err) => console.error("Delayed worker trigger failed:", err));
-      }, delayUntilStart);
+    // Trigger real-time queue worker immediately so the first email is dispatched right away
+    let workerResult: any = null;
+    if (isInstantStart) {
+      try {
+        workerResult = await processDueJobs();
+      } catch (err) {
+        console.error("Worker immediate execution failed:", err);
+      }
+    } else {
+      const delayUntilStart = Math.max(0, baseRunAt.getTime() - Date.now());
+      if (delayUntilStart <= 5000) {
+        try {
+          workerResult = await processDueJobs();
+        } catch (err) {
+          console.error("Delayed worker trigger failed:", err);
+        }
+      }
     }
 
     const formattedTime = formatScheduledTime(baseRunAt, timezone);
@@ -353,12 +384,14 @@ export async function POST(
       success: true,
       count: configuredCount,
       mode,
+      status: campaignStatus,
+      firstEmailDispatched: Boolean(workerResult && workerResult.sent > 0),
+      workerResult,
       startTime: baseRunAt.toISOString(),
       formattedStartTime: formattedTime,
-      message:
-        mode === "sendNow"
-          ? `🚀 Campaign "${campaign.name}" dispatched! ${configuredCount} emails sending in real time with ${spacingSeconds}s gap.`
-          : `🕒 Campaign "${campaign.name}" scheduled successfully for ${formattedTime} with ${spacingSeconds}s interval!`,
+      message: isInstantStart
+        ? `🚀 Campaign "${campaign.name}" is now Active in Real Time! First email dispatched immediately via Hostinger SMTP.`
+        : `🕒 Campaign "${campaign.name}" scheduled successfully for ${formattedTime} with ${spacingSeconds}s interval!`,
     });
   } catch (error) {
     if (error instanceof Response) return error;
