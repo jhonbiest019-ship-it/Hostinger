@@ -126,31 +126,28 @@ export async function POST(request: NextRequest) {
 
     const detectedCols = detectColumnKeys(columns);
     const processedRows: any[] = [];
-    let sequentialCounter = 0;
 
     rawRows.forEach((row, idx) => {
-      // 1. Check if row is completely blank
+      const spreadsheetLineNumber = idx + 2; // spreadsheet line number (header is row 1)
       const values = Object.values(row).map((v) => (v ? String(v).trim() : ""));
       const isBlank = values.every((v) => v === "");
-      if (isBlank) return;
 
-      sequentialCounter++;
-      const extracted = extractRowData(row, sequentialCounter, detectedCols);
+      const extracted = extractRowData(row, spreadsheetLineNumber, detectedCols);
 
       processedRows.push({
-        index: sequentialCounter,
-        sheetRowNumber: idx + 2, // spreadsheet line number (header is row 1)
-        sheetNum: extracted.sheetNum,
+        index: spreadsheetLineNumber,
+        sheetRowNumber: spreadsheetLineNumber,
+        sheetNum: extracted.sheetNum || spreadsheetLineNumber,
         asin: extracted.asin,
         amazonLink: extracted.amazonLink,
-        brandName: extracted.brandName,
+        brandName: isBlank ? `Row #${spreadsheetLineNumber}` : extracted.brandName,
         brandEmail: extracted.brandEmail,
         productCategory: extracted.hasCategory ? extracted.productCategory : "Missing Category",
         website: extracted.website,
         hasValidEmail: extracted.isValidEmail,
-        hasValidBrand: extracted.hasBrand,
+        hasValidBrand: isBlank ? false : extracted.hasBrand,
         hasValidCategory: extracted.hasCategory,
-        quality: extracted.quality,
+        quality: isBlank ? "NO_EMAIL" : extracted.quality,
         missingFields: extracted.missingFields,
         raw: row,
       });

@@ -969,9 +969,16 @@ export function CampaignWorkspace({ initialSourceMode }: CampaignWorkspaceProps 
     setFileName("");
   }
 
-  // Active Selected Rows based on fromRow and toRow: exactly fromRow to toRow (End - Start + 1)
+  // Active Selected Rows based on fromRow and toRow matching exact spreadsheet row numbers
   const selectedRows = useMemo(() => {
     if (!allParsedRows.length) return [];
+    const hasSheetRowNums = allParsedRows.some((r) => typeof r.sheetRowNumber === "number" && r.sheetRowNumber > 0);
+    if (hasSheetRowNums) {
+      const filtered = allParsedRows.filter(
+        (r) => (r.sheetRowNumber ?? r.index) >= fromRow && (r.sheetRowNumber ?? r.index) <= toRow
+      );
+      if (filtered.length > 0) return filtered;
+    }
     const start = Math.max(1, fromRow);
     const end = Math.min(allParsedRows.length, toRow);
     if (start > end) return [];
