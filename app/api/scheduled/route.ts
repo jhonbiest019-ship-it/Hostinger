@@ -16,7 +16,6 @@ export async function GET(request: NextRequest) {
     const pageSize = Math.max(1, Math.min(1000, Math.floor(Number(request.nextUrl.searchParams.get("pageSize"))) || 300));
     const page = Math.max(1, Math.min(100000, Math.floor(Number(request.nextUrl.searchParams.get("page"))) || 1));
     const where = {
-      userId,
       ...(status ? { status: status as JobStatus } : {}),
       ...(campaignId ? { campaignId } : {}),
     };
@@ -112,9 +111,9 @@ export async function GET(request: NextRequest) {
       }),
       prisma.scheduledJob.count({ where }),
       prisma.workerLease.findUnique({ where: { name: "queue" }, select: { updatedAt: true } }),
-      prisma.template.findFirst({ where: { userId, status: "ACTIVE", isDefault: true } }),
+      prisma.template.findFirst({ where: { status: "ACTIVE", isDefault: true } }),
       prisma.campaign.findMany({
-        where: { userId },
+        where: {},
         include: {
           mailbox: { select: { id: true, emailAddress: true, displayName: true } },
           template: { select: { id: true, name: true, subject: true, body: true } },
@@ -125,6 +124,7 @@ export async function GET(request: NextRequest) {
               snapshotBrand: true,
               snapshotEmail: true,
               productCategory: true,
+              sheetRowIndex: true,
               contact: { select: { brandName: true, email: true, name: true } },
             },
           },
@@ -140,11 +140,15 @@ export async function GET(request: NextRequest) {
       const recipient = job.campaignRecipient;
       const contact = recipient?.contact;
 
-      const email =
+      let email =
         recipient?.snapshotEmail ||
         contact?.email ||
         job.message?.toAddress ||
         "";
+
+      if (email.includes("@placeholder.invalid")) {
+        email = "";
+      }
 
       let brandName =
         recipient?.snapshotBrand ||
@@ -161,6 +165,8 @@ export async function GET(request: NextRequest) {
             .split(/[-_]/)
             .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
             .join(" ");
+        } else if (recipient?.sheetRowIndex) {
+          brandName = `Brand #Row ${recipient.sheetRowIndex}`;
         } else {
           brandName = "Brand";
         }

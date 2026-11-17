@@ -120,7 +120,34 @@ async function processJob(id: string, leaseToken: string, maxAttempts: number, l
     }
   }
   if (job.jobType === "INITIAL_EMAIL" && recipient.status === "SENT") return finish("CANCELLED", "Initial email already sent.");
-  if (["DO_NOT_CONTACT", "INVALID", "ARCHIVED"].includes(contact.status) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) return finish("FAILED", "Recipient is blocked, archived or has an invalid email.");
+
+  const candidateEmail = (recipient.snapshotEmail || contact.email || "").trim();
+  const hasValidTargetEmail = Boolean(
+    candidateEmail &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail) &&
+    !/^(n\/a|none|undefined|null|-)$/i.test(candidateEmail) &&
+    !candidateEmail.includes("@placeholder.invalid")
+  );
+
+  if (["DO_NOT_CONTACT", "ARCHIVED"].includes(contact.status)) {
+    return finish("FAILED", "Recipient is blocked or archived.");
+  }
+
+  if (!hasValidTargetEmail) {
+    // Keep in pending queue with clear notice so it displays 1-by-1 in UI
+    await prisma.scheduledJob.updateMany({
+      where: owned,
+      data: {
+        status: "PENDING",
+        attempts: 0,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        lastError: "Missing Email Address in Sheet (Enter email to dispatch)",
+        nextAttemptAt: new Date(Date.now() + 3600_000),
+      },
+    });
+    return "paused";
+  }
   if (job.jobType === "FOLLOW_UP") {
     if (!campaign.followUpsEnabled || !job.followUpRule?.enabled || job.followUpRule.status !== "ACTIVE" || job.followUpRule.campaignId !== campaign.id) return finish("CANCELLED", "Follow-up is disabled or unavailable.");
     const previous = await prisma.emailMessage.count({ where: { recipientId: recipient.id, status: "SENT", followUpStep: { lt: job.followUpStep ?? 1 } } });

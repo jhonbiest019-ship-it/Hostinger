@@ -190,26 +190,17 @@ export async function POST(
     const isInstantStart = mode === "sendNow" || (baseRunAt.getTime() <= Date.now() + 60_000);
     const campaignStatus = isInstantStart ? "SENDING" : "SCHEDULED";
 
-    // Only schedule recipients that have a valid email and have not been sent or replied
-    const eligibleRecipients = campaign.recipients.filter((r) => {
-      const email = (r.snapshotEmail || r.contact?.email || "").trim();
-      const isValid = Boolean(
-        email &&
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) &&
-        !/^(n\/a|none|undefined|null|-)$/i.test(email) &&
-        !email.includes("@placeholder.invalid")
-      );
-      return isValid && !r.sentAt && !r.repliedAt && r.status !== "REPLIED";
-    });
+    // Target all pending campaign recipients so every row appears 1-by-1 in the scheduled queue
+    const targetRecipients = campaign.recipients.filter(
+      (r) => !r.sentAt && !r.repliedAt && r.status !== "REPLIED"
+    );
 
-    if (eligibleRecipients.length === 0) {
-      // If there are no recipients with valid email addresses yet, still activate the campaign & link mailbox
+    if (targetRecipients.length === 0) {
       await prisma.campaign.update({
         where: { id },
         data: {
           mailboxId: finalMailboxId,
-          status: "ACTIVE",
-          formAutomationEnabled: Boolean(queueWebforms || campaign.formAutomationEnabled),
+          status: "COMPLETED",
           updatedAt: new Date(),
         },
       });
@@ -218,9 +209,8 @@ export async function POST(
         success: true,
         count: 0,
         mode,
-        status: "ACTIVE",
-        firstEmailDispatched: false,
-        message: `🚀 Campaign "${campaign.name}" is now ACTIVE! (Note: Selected rows currently have missing email addresses in the Google Sheet. As soon as emails are added, they will dispatch automatically).`,
+        status: "COMPLETED",
+        message: `All recipients in campaign "${campaign.name}" have already been sent!`,
       });
     }
 
@@ -233,10 +223,9 @@ export async function POST(
       orderBy: { createdAt: "asc" },
     });
 
-    // Clean up any stale jobs belonging to skipped recipients with no email
-    const eligibleRecipientIds = new Set(eligibleRecipients.map((r) => r.id));
+    const targetRecipientIds = new Set(targetRecipients.map((r) => r.id));
     const staleJobIds = existingJobs
-      .filter((j) => !j.campaignRecipientId || !eligibleRecipientIds.has(j.campaignRecipientId))
+      .filter((j) => !j.campaignRecipientId || !targetRecipientIds.has(j.campaignRecipientId))
       .map((j) => j.id);
 
     if (staleJobIds.length > 0) {
@@ -248,7 +237,7 @@ export async function POST(
     // Map existing jobs by campaignRecipientId to reuse existing job records and avoid duplicates
     const jobsByRecipient = new Map<string, typeof existingJobs>();
     for (const j of existingJobs) {
-      if (j.campaignRecipientId && eligibleRecipientIds.has(j.campaignRecipientId)) {
+      if (j.campaignRecipientId && targetRecipientIds.has(j.campaignRecipientId)) {
         const arr = jobsByRecipient.get(j.campaignRecipientId) || [];
         arr.push(j);
         jobsByRecipient.set(j.campaignRecipientId, arr);
@@ -256,9 +245,18 @@ export async function POST(
     }
 
     let configuredCount = 0;
+    let validEmailCount = 0;
 
-    for (let i = 0; i < eligibleRecipients.length; i++) {
-      const recipient = eligibleRecipients[i];
+    for (let i = 0; i < targetRecipients.length; i++) {
+      const recipient = targetRecipients[i];
+      const email = (recipient.snapshotEmail || recipient.contact?.email || "").trim();
+      const hasValidEmail = Boolean(
+        email &&
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) &&
+        !/^(n\/a|none|undefined|null|-)$/i.test(email) &&
+        !email.includes("@placeholder.invalid")
+      );
+
       let jobRunAt: Date;
       if (isInstantStart) {
         if (i === 0) {
@@ -272,12 +270,12 @@ export async function POST(
       }
       const recipientJobs = jobsByRecipient.get(recipient.id) || [];
 
-      // Reactivate campaign recipient status so worker will dispatch
+      // Reactivate campaign recipient status
       await prisma.campaignRecipient.update({
         where: { id: recipient.id },
         data: {
           status: "PENDING",
-          errorMessage: null,
+          errorMessage: hasValidEmail ? null : "Missing Email Address in Sheet (Enter email to dispatch)",
         },
       });
 
@@ -293,7 +291,7 @@ export async function POST(
             deliveryState: "NOT_STARTED",
             leaseToken: null,
             leaseExpiresAt: null,
-            lastError: null,
+            lastError: hasValidEmail ? null : "Missing Email Address in Sheet (Enter email to dispatch)",
             timezone,
           },
         });
@@ -317,8 +315,13 @@ export async function POST(
             timezone,
             status: "PENDING",
             deliveryState: "NOT_STARTED",
+            lastError: hasValidEmail ? null : "Missing Email Address in Sheet (Enter email to dispatch)",
           },
         });
+      }
+
+      if (hasValidEmail) {
+        validEmailCount++;
       }
 
       // Automatically queue website form job if enabled and brand has webform link or website

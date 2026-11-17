@@ -33,6 +33,9 @@ type Job = {
     snapshotEmail?: string | null;
     snapshotName?: string | null;
     productCategory?: string | null;
+    sheetRowIndex?: number | null;
+    formStatus?: string | null;
+    formUrl?: string | null;
     contact: {
       id?: string;
       name: string;
@@ -1180,11 +1183,11 @@ export function ScheduledWorkspace() {
                         <span className="block text-[10px] font-bold text-gray-400 uppercase">Target Brands</span>
                         <div className="flex items-baseline gap-1.5">
                           <span className="font-extrabold text-gray-900 text-sm">
-                            {sentRecipientsCount} / {totalRecipients - skippedRecipientsCount} Sent
+                            {sentRecipientsCount} / {totalRecipients} Sent
                           </span>
                           {skippedRecipientsCount > 0 && (
-                            <span className="text-[10px] text-gray-500 font-medium">
-                              ({skippedRecipientsCount} no email)
+                            <span className="text-[10px] text-amber-600 font-semibold">
+                              ({skippedRecipientsCount} pending email in sheet)
                             </span>
                           )}
                         </div>
@@ -1672,7 +1675,10 @@ export function ScheduledWorkspace() {
           const otherJobs = displayedJobs.filter((j) => j.status === "CANCELLED" || j.status === "FAILED");
 
           function getTargetInfo(job: Job) {
-            const email = job.recipientEmail || job.campaignRecipient?.contact.email || (job as any).message?.toAddress || "";
+            let email = job.recipientEmail || job.campaignRecipient?.contact.email || (job as any).message?.toAddress || "";
+            if (email.includes("@placeholder.invalid")) {
+              email = "";
+            }
             let brand = job.brandName;
             if (!brand || brand.trim().toLowerCase() === "brand") {
               brand = job.campaignRecipient?.snapshotBrand || job.campaignRecipient?.contact.brandName || job.campaignRecipient?.contact.name;
@@ -1681,15 +1687,18 @@ export function ScheduledWorkspace() {
               if (email && email.includes("@")) {
                 const domain = email.split("@")[1].split(".")[0];
                 brand = domain.split(/[-_]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+              } else if (job.campaignRecipient?.sheetRowIndex) {
+                brand = `Brand #Row ${job.campaignRecipient.sheetRowIndex}`;
               } else {
                 brand = "Direct Recipient";
               }
             }
-            return { brand, email: email || "—" };
+            return { brand, email: email || "— (Missing Email in Sheet)" };
           }
 
           function renderTableRow(job: Job) {
             const { brand: targetBrand, email: targetEmail } = getTargetInfo(job);
+            const isMissingEmail = targetEmail.includes("Missing Email") || (job.lastError && job.lastError.includes("Missing Email"));
             const campaignTitle = job.campaign?.name || "Direct Outreach";
             const isSent = job.status === "COMPLETED";
             const isPending = job.status === "PENDING";
@@ -1702,10 +1711,12 @@ export function ScheduledWorkspace() {
                 className={`transition border-b border-gray-100 ${
                   isSent
                     ? "border-l-4 border-l-emerald-500 bg-emerald-50/15 hover:bg-emerald-50/30"
-                    : isPending
-                    ? "border-l-4 border-l-blue-500 bg-blue-50/15 hover:bg-blue-50/30"
                     : isProcessing
                     ? "border-l-4 border-l-purple-500 bg-purple-50/25 animate-pulse"
+                    : isPending && isMissingEmail
+                    ? "border-l-4 border-l-amber-500 bg-amber-50/15 hover:bg-amber-50/30"
+                    : isPending
+                    ? "border-l-4 border-l-blue-500 bg-blue-50/15 hover:bg-blue-50/30"
                     : "border-l-4 border-l-gray-300 bg-gray-50/20 hover:bg-gray-50/40"
                 }`}
               >
@@ -1715,13 +1726,17 @@ export function ScheduledWorkspace() {
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs">
                       ✓ SENT
                     </span>
-                  ) : isPending ? (
-                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-300 shadow-2xs">
-                      ⏳ PENDING
-                    </span>
                   ) : isProcessing ? (
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs animate-pulse">
                       ⚡ SENDING
+                    </span>
+                  ) : isPending && isMissingEmail ? (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-800 border border-amber-300 shadow-2xs" title="Missing Email Address in Sheet. Add email to dispatch automatically.">
+                      ⚠️ NO EMAIL IN SHEET
+                    </span>
+                  ) : isPending ? (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-300 shadow-2xs">
+                      ⏳ PENDING
                     </span>
                   ) : isCancelled ? (
                     <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-gray-100 text-gray-600 border border-gray-300 shadow-2xs">
@@ -1739,7 +1754,13 @@ export function ScheduledWorkspace() {
                   <div className="flex items-center gap-2">
                     <span
                       className={`w-2 h-2 rounded-full shrink-0 ${
-                        isSent ? "bg-emerald-500" : isPending ? "bg-blue-500" : "bg-gray-400"
+                        isSent
+                          ? "bg-emerald-500"
+                          : isPending && isMissingEmail
+                          ? "bg-amber-500"
+                          : isPending
+                          ? "bg-blue-500"
+                          : "bg-gray-400"
                       }`}
                     />
                     <span className="font-extrabold text-gray-900 group-hover:text-[#673DE6] text-sm group-hover:underline">
@@ -1751,7 +1772,7 @@ export function ScheduledWorkspace() {
                       </span>
                     )}
                   </div>
-                  <p className="font-mono text-xs text-gray-600 mt-0.5 ml-4 font-semibold">
+                  <p className={`font-mono text-xs mt-0.5 ml-4 font-semibold ${isMissingEmail ? "text-amber-700 italic" : "text-gray-600"}`}>
                     {targetEmail}
                   </p>
 
